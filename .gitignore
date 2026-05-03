@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+
+# Local env / secrets
+.env
+.env.local
+*.local.yml
+
+# Operator-only files (never committed)
+SESSION-RESUME.md
+PROBE-NOTES.md
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Build artifacts
+dist/
+build/

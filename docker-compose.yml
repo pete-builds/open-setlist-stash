@@ -1,0 +1,72 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  phish-game:
+    build: .
+    image: phish-game:0.1.0
+    container_name: phish-game
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M
+    ports:
+      - "${APP_PORT:-3706}:${APP_PORT:-3706}"
+    env_file:
+      - .env
+    environment:
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "${APP_PORT:-3706}"
+      TZ: "${TZ:-UTC}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - default
+      # Phase 4: join the mcp-phish container's default network so the game
+      # can reach `mcp-phish` by name. The game NEVER joins phish-vault_default.
+      # Vault reads route through mcp-phish only.
+      - mcp-phish
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "python", "-m", "phish_game.healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: phish-game-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${PG_DB:-phish_game}"
+      POSTGRES_USER: "${PG_USER:-phish_game}"
+      POSTGRES_PASSWORD: "${PG_PASSWORD:?PG_PASSWORD must be set in .env}"
+    volumes:
+      - phish-game-pg-data:/var/lib/postgresql/data
+    # Loopback-only host binding for ad-hoc queries; cross-container traffic
+    # uses the docker bridge.
+    ports:
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${PG_USER:-phish_game} -d ${PG_DB:-phish_game}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *default-logging
+
+volumes:
+  phish-game-pg-data:
+
+networks:
+  mcp-phish:
+    external: true
+    name: mcp-phish_default
