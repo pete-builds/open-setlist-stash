@@ -29,9 +29,10 @@ jobs:
       - name: Install dev dependencies
         run: |
           python -m pip install --upgrade pip
-          # Session 9 will switch this to --require-hashes against a
-          # generated requirements-dev.lock. Today the .in is the source.
-          pip install -r requirements-dev.in
+          # Hash-pinned install (session 9+). Lockfile is generated on
+          # Linux via `uv pip compile --python-version 3.13
+          # --python-platform linux --generate-hashes`.
+          pip install --require-hashes -r requirements-dev.lock
           pip install -e . --no-deps
 
       - name: Ruff (lint)
@@ -71,7 +72,7 @@ jobs:
       - name: Install dev dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.in
+          pip install --require-hashes -r requirements-dev.lock
           pip install -e . --no-deps
 
       - name: Wait for Postgres

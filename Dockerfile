@@ -14,12 +14,13 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Phase 4 kickoff uses requirements.in directly. Subsequent sessions will
-# generate a hash-pinned requirements.lock with `uv pip compile` and switch
-# this stage to `pip install --require-hashes -r requirements.lock` to match
-# mcp-phish and mcp-unifi.
-COPY requirements.in ./requirements.in
-RUN pip install --no-cache-dir --target /wheels -r requirements.in
+# Hash-pinned reproducible install (session 9 onwards). Lockfile generated
+# via `uv pip compile requirements.in --generate-hashes --python-version 3.13
+# --python-platform linux` inside a python:3.13-slim container so the hash
+# set covers the same Linux wheels we install at build time. Mirrors
+# mcp-phish + mcp-unifi.
+COPY requirements.lock ./requirements.lock
+RUN pip install --no-cache-dir --require-hashes --target /wheels -r requirements.lock
 
 COPY pyproject.toml README.md ./
 COPY src/ ./src/

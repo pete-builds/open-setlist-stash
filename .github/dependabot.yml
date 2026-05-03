@@ -1,6 +1,10 @@
 version: 2
 updates:
-  # Python deps. Session 9 will swap this to a hash-pinned requirements.lock.
+  # Python deps. Dependabot bumps requirements.in + pyproject.toml; the
+  # hash-pinned requirements.lock + requirements-dev.lock are hand-
+  # regenerated via `uv pip compile --python-version 3.13 --python-platform
+  # linux --generate-hashes` (run inside a python:3.13-slim container). Same
+  # pattern as mcp-phish.
   - package-ecosystem: pip
     directory: /
     schedule:
@@ -22,6 +26,10 @@ updates:
           - patch
 
   # Docker base image (Dockerfile FROM digests).
+  # Python pinned to 3.13.x: session 9 generates requirements.lock with
+  # `uv pip compile --python-version 3.13`, so the base image and the
+  # resolver assumptions must stay aligned. Revisit 3.14 as a coordinated
+  # bump (lockfile + Dockerfile + CI) after 3.14 is widely shipped.
   - package-ecosystem: docker
     directory: /
     schedule:
@@ -36,6 +44,11 @@ updates:
     commit-message:
       prefix: deps(docker)
       include: scope
+    ignore:
+      - dependency-name: python
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
     groups:
       docker-minor-patch:
         update-types:
