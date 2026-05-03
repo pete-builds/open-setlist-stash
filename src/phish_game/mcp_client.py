@@ -50,6 +50,8 @@ class McpPhishClient:
             shows = await client.recent_shows(limit=10)
     """
 
+    PROTOCOL_VERSION = "2025-06-18"
+
     def __init__(
         self,
         url: str,
@@ -62,6 +64,8 @@ class McpPhishClient:
         # Allow tests to inject a transport-mocked client.
         self._client = client
         self._owns_client = client is None
+        self._session_id: str | None = None
+        self._initialized: bool = False
 
     async def __aenter__(self) -> McpPhishClient:
         if self._client is None:
@@ -72,6 +76,77 @@ class McpPhishClient:
         if self._owns_client and self._client is not None:
             await self._client.aclose()
             self._client = None
+        self._session_id = None
+        self._initialized = False
+
+    async def _initialize(self) -> None:
+        """Run the FastMCP Streamable HTTP handshake.
+
+        1. POST ``initialize`` (response carries ``mcp-session-id`` header)
+        2. POST ``notifications/initialized`` (notification; 202 expected)
+
+        Idempotent — subsequent calls re-use the session id.
+        """
+        if self._initialized:
+            return
+        if self._client is None:
+            raise McpPhishError("client not entered (use async with)")
+        init_body = {
+            "jsonrpc": "2.0",
+            "id": secrets.token_hex(8),
+            "method": "initialize",
+            "params": {
+                "protocolVersion": self.PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "phish-game", "version": "0.1.0"},
+            },
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        try:
+            resp = await self._client.post(self._url, json=init_body, headers=headers)
+        except httpx.HTTPError as exc:
+            raise McpPhishUnavailable(f"initialize: network error: {exc}") from exc
+        if resp.status_code >= 500:
+            raise McpPhishUnavailable(
+                f"initialize: upstream {resp.status_code}: {resp.text[:200]}"
+            )
+        if resp.status_code >= 400:
+            raise McpPhishNotFound(
+                f"initialize: upstream {resp.status_code}: {resp.text[:200]}"
+            )
+        session_id = resp.headers.get("mcp-session-id")
+        if not session_id:
+            raise McpPhishError("initialize: server did not return mcp-session-id")
+        # Drain the body to keep the connection clean; we don't need it.
+        _ = _parse_response(resp)
+        self._session_id = session_id
+
+        # Send the initialized notification. No response body expected
+        # (it's a JSON-RPC notification).
+        notify_body = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+        }
+        notify_headers = dict(headers)
+        notify_headers["mcp-session-id"] = session_id
+        try:
+            ack = await self._client.post(
+                self._url, json=notify_body, headers=notify_headers
+            )
+        except httpx.HTTPError as exc:
+            raise McpPhishUnavailable(
+                f"initialized notification: {exc}"
+            ) from exc
+        if ack.status_code >= 400:
+            # Some FastMCP versions return 202; others 200. Either is fine.
+            raise McpPhishError(
+                f"initialized notification rejected: {ack.status_code}"
+            )
+        self._initialized = True
 
     # ----- public tool wrappers ---------------------------------------------
 
@@ -144,6 +219,7 @@ class McpPhishClient:
         """
         if self._client is None:
             raise McpPhishError("client not entered (use async with)")
+        await self._initialize()
         request_id = secrets.token_hex(8)
         body = {
             "jsonrpc": "2.0",
@@ -155,6 +231,8 @@ class McpPhishClient:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+        if self._session_id:
+            headers["mcp-session-id"] = self._session_id
         try:
             resp = await self._client.post(self._url, json=body, headers=headers)
         except httpx.HTTPError as exc:
