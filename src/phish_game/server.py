@@ -293,6 +293,8 @@ def build_app(
             show=show,
             lock=_format_lock(lock, cfg),
             existing=existing,
+            form_values={},
+            bad_slugs=[],
         )
 
     @app.post("/predict/{show_date}")
@@ -311,6 +313,18 @@ def build_app(
             return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
         pool = get_pool()
 
+        # Capture raw values up-front so any error path can re-render the
+        # form with the user's existing picks intact (including invalid
+        # ones, so they can see what to fix).
+        raw_form: dict[str, str] = {
+            "pick_1": pick_1.strip().lower(),
+            "pick_2": pick_2.strip().lower(),
+            "pick_3": pick_3.strip().lower(),
+            "opener_slug": opener_slug.strip().lower(),
+            "closer_slug": closer_slug.strip().lower(),
+            "encore_slug": encore_slug.strip().lower(),
+        }
+
         try:
             picks = normalize_picks([pick_1, pick_2, pick_3])
             opener = normalize_slot(opener_slug)
@@ -318,7 +332,7 @@ def build_app(
             encore = normalize_slot(encore_slug)
         except PredictionError as exc:
             return await _re_render_predict(
-                request, user, show_date, error=str(exc)
+                request, user, show_date, error=str(exc), form_values=raw_form
             )
 
         from phish_game.locks import ShowTarget
@@ -338,6 +352,61 @@ def build_app(
                 show_date,
                 error="Predictions are locked for this show.",
                 status_code=status.HTTP_409_CONFLICT,
+                form_values=raw_form,
+            )
+
+        # Slug validation gate (Layer 1): confirm every submitted slug
+        # corresponds to a real song before we touch the DB. The picker UI
+        # is a UX guardrail; this is the trust boundary. A user submitting
+        # via curl, with JS off, or against a stale autocomplete list
+        # cannot bypass this.
+        slugs_to_check = [
+            s for s in (*picks, opener, closer, encore) if s
+        ]
+        try:
+            async with McpPhishClient(
+                cfg.mcp_phish_url,
+                timeout_seconds=cfg.mcp_phish_timeout_seconds,
+            ) as mcp:
+                valid_slugs = await mcp.validate_song_slugs(slugs_to_check)
+        except McpPhishError:
+            logger.warning(
+                "mcp-phish unreachable for slug validation",
+                extra={"show_date": str(show_date)},
+            )
+            return await _re_render_predict(
+                request,
+                user,
+                show_date,
+                error=(
+                    "Could not validate song picks right now (upstream "
+                    "unavailable). Please try again in a moment."
+                ),
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                form_values=raw_form,
+            )
+        bad_slugs = [s for s in slugs_to_check if s not in valid_slugs]
+        if bad_slugs:
+            # Highlight which slugs failed. Order-preserving + de-duped.
+            seen: set[str] = set()
+            unique_bad: list[str] = []
+            for s in bad_slugs:
+                if s not in seen:
+                    seen.add(s)
+                    unique_bad.append(s)
+            error_msg = (
+                "These picks aren't real Phish songs in the database: "
+                + ", ".join(unique_bad)
+                + ". Pick from the autocomplete suggestions."
+            )
+            return await _re_render_predict(
+                request,
+                user,
+                show_date,
+                error=error_msg,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                form_values=raw_form,
+                bad_slugs=unique_bad,
             )
 
         try:
@@ -355,16 +424,19 @@ def build_app(
             return await _re_render_predict(
                 request, user, show_date, error=str(exc),
                 status_code=status.HTTP_409_CONFLICT,
+                form_values=raw_form,
             )
         except PredictionDuplicate as exc:
             return await _re_render_predict(
                 request, user, show_date, error=str(exc),
                 status_code=status.HTTP_409_CONFLICT,
+                form_values=raw_form,
             )
         except PredictionError as exc:
             return await _re_render_predict(
                 request, user, show_date, error=str(exc),
                 status_code=status.HTTP_400_BAD_REQUEST,
+                form_values=raw_form,
             )
 
         memberships = await list_user_leagues(pool, user.id)
@@ -387,6 +459,8 @@ def build_app(
         *,
         error: str,
         status_code: int = status.HTTP_400_BAD_REQUEST,
+        form_values: dict[str, str] | None = None,
+        bad_slugs: list[str] | None = None,
     ) -> Response:
         pool = get_pool()
         from phish_game.locks import ShowTarget
@@ -411,6 +485,8 @@ def build_app(
             lock=_format_lock(lock, cfg),
             existing=existing,
             error=error,
+            form_values=form_values or {},
+            bad_slugs=bad_slugs or [],
         )
         resp.status_code = status_code
         return resp

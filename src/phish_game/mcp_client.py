@@ -222,6 +222,40 @@ class McpPhishClient:
             )
         return rows
 
+    async def validate_song_slugs(self, slugs: list[str]) -> set[str]:
+        """Return the subset of ``slugs`` that correspond to real songs.
+
+        Server-side validation gate for the predict form: the picker UI hands
+        us slugs the user clicked from the autocomplete, but we still treat
+        every submitted slug as untrusted (curl, JS-disabled, race against
+        an alias removal). Any slug that isn't found is dropped from the
+        returned set; the caller compares against the input to surface
+        per-pick errors.
+
+        Implementation note: when mcp-phish ships a batch
+        ``validate_song_slugs`` tool we'll switch to a single round-trip.
+        Today we fan out N ``get_song`` calls and absorb ``McpPhishNotFound``
+        as "doesn't exist". 6 round-trips on submit is fine — the predict
+        POST already does at most one DB write.
+        """
+        valid: set[str] = set()
+        seen: set[str] = set()
+        for raw in slugs:
+            if not raw:
+                continue
+            slug = raw.strip().lower()
+            if not slug or slug in seen:
+                continue
+            seen.add(slug)
+            try:
+                row = await self.get_song(slug)
+            except McpPhishNotFound:
+                continue
+            # Defense-in-depth: only count it if the row's slug echoes back.
+            if isinstance(row, dict) and str(row.get("slug", "")).lower() == slug:
+                valid.add(slug)
+        return valid
+
     async def venue_history(
         self, venue_slug: str, limit: int = 25
     ) -> list[dict[str, Any]]:

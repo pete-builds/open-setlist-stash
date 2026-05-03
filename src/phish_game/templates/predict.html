@@ -40,56 +40,234 @@
     {% if error %}
       <p class="error">{{ error }}</p>
     {% endif %}
-    <form method="post" action="/predict/{{ show.show_date }}" id="predict-form">
+    <form method="post" action="/predict/{{ show.show_date }}" id="predict-form" novalidate>
       <fieldset>
         <legend>Three songs (any set)</legend>
         {% for i in [1, 2, 3] %}
-          <label for="pick-{{ i }}">Pick {{ i }}</label>
-          <input type="text" id="pick-{{ i }}" name="pick_{{ i }}" required
-                 list="songs-list" placeholder="e.g. tweezer"
-                 hx-get="/songs/search"
-                 hx-trigger="input changed delay:200ms, focus"
-                 hx-target="#songs-list"
-                 hx-swap="innerHTML"
-                 hx-include="this"
-                 hx-params="q"
-                 autocomplete="off">
+          {% set slot = 'pick_' ~ i %}
+          {% set initial = form_values.get(slot, '') if form_values else '' %}
+          {% set is_bad = initial and initial in bad_slugs %}
+          <div class="song-picker{% if is_bad %} song-picker-bad{% endif %}" data-slot="{{ slot }}">
+            <label for="{{ slot }}_title">Pick {{ i }}{% if is_bad %} <span class="error">(not a real song)</span>{% endif %}</label>
+            <input type="text"
+                   id="{{ slot }}_title"
+                   class="song-picker-title"
+                   value="{{ initial }}"
+                   placeholder="e.g. tweezer"
+                   list="songs-list-{{ slot }}"
+                   hx-get="/songs/search"
+                   hx-trigger="input changed delay:200ms, focus"
+                   hx-target="#songs-list-{{ slot }}"
+                   hx-swap="innerHTML"
+                   hx-include="this"
+                   hx-params="q"
+                   autocomplete="off"
+                   required>
+            <datalist id="songs-list-{{ slot }}"></datalist>
+            <input type="hidden" name="{{ slot }}" id="{{ slot }}" class="song-picker-slug" value="{{ initial }}">
+            <p class="picker-hint muted" data-for="{{ slot }}"></p>
+          </div>
         {% endfor %}
       </fieldset>
 
       <fieldset>
         <legend>Slot picks (optional)</legend>
-        <label for="opener_slug">Opener</label>
-        <input type="text" id="opener_slug" name="opener_slug" list="songs-list"
-               placeholder="optional" autocomplete="off">
-
-        <label for="closer_slug">Closer</label>
-        <input type="text" id="closer_slug" name="closer_slug" list="songs-list"
-               placeholder="optional" autocomplete="off">
-
-        <label for="encore_slug">Encore</label>
-        <input type="text" id="encore_slug" name="encore_slug" list="songs-list"
-               placeholder="optional" autocomplete="off">
+        {% for slot in ['opener_slug', 'closer_slug', 'encore_slug'] %}
+          {% set label = {'opener_slug': 'Opener', 'closer_slug': 'Closer', 'encore_slug': 'Encore'}[slot] %}
+          {% set initial = form_values.get(slot, '') if form_values else '' %}
+          {% set is_bad = initial and initial in bad_slugs %}
+          <div class="song-picker song-picker-optional{% if is_bad %} song-picker-bad{% endif %}" data-slot="{{ slot }}">
+            <label for="{{ slot }}_title">{{ label }}{% if is_bad %} <span class="error">(not a real song)</span>{% endif %}</label>
+            <input type="text"
+                   id="{{ slot }}_title"
+                   class="song-picker-title"
+                   value="{{ initial }}"
+                   placeholder="optional"
+                   list="songs-list-{{ slot }}"
+                   hx-get="/songs/search"
+                   hx-trigger="input changed delay:200ms, focus"
+                   hx-target="#songs-list-{{ slot }}"
+                   hx-swap="innerHTML"
+                   hx-include="this"
+                   hx-params="q"
+                   autocomplete="off">
+            <datalist id="songs-list-{{ slot }}"></datalist>
+            <input type="hidden" name="{{ slot }}" id="{{ slot }}" class="song-picker-slug" value="{{ initial }}">
+            <p class="picker-hint muted" data-for="{{ slot }}"></p>
+          </div>
+        {% endfor %}
       </fieldset>
 
-      <datalist id="songs-list">
-        <!-- populated via HTMX from /songs/search -->
-      </datalist>
-
-      <button type="submit" class="btn">Submit prediction</button>
+      <button type="submit" class="btn" id="predict-submit-btn">Submit prediction</button>
       <p class="muted">
-        Pre-lock UI shows form + countdown only. Gap, last-played, and
-        rarity stats unlock after lock_at to keep the contest fair.
+        Pick from the autocomplete suggestions. Free-text entries that don't
+        match a Phish song will be rejected. Gap, last-played, and rarity
+        stats unlock after lock_at to keep the contest fair.
       </p>
     </form>
   {% endif %}
 
   {% if not lock.is_locked %}
     <script>
-      // Lock countdown. Vanilla JS, no framework. Re-renders the
-      // #lock-countdown span every second; once we cross lock_at, it
-      // swaps the form area for a "Predictions locked" panel without a
-      // full reload (it triggers a reload to fetch the post-lock view).
+      // Strict song-picker state machine. Vanilla JS, no framework.
+      // ---------------------------------------------------------------------
+      // Each .song-picker has:
+      //   - .song-picker-title (visible input the user types in)
+      //   - .song-picker-slug  (hidden input that ships with the form)
+      //   - <datalist>         (populated by HTMX with <option value="slug">title</option>)
+      //
+      // The hidden slug is the source of truth. We only set it when the
+      // visible input value matches a slug OR title in the current datalist.
+      // On blur without a match, we clear the hidden slug and show a hint.
+      //
+      // The submit button is disabled until all 3 required pickers (pick_1,
+      // pick_2, pick_3) have non-empty hidden slugs.
+      (function () {
+        var REQUIRED_SLOTS = ['pick_1', 'pick_2', 'pick_3'];
+
+        function pickers() {
+          return Array.prototype.slice.call(document.querySelectorAll('.song-picker'));
+        }
+
+        function findMatchInDatalist(datalist, typed) {
+          if (!datalist) return null;
+          var t = (typed || '').trim().toLowerCase();
+          if (!t) return null;
+          var opts = datalist.querySelectorAll('option');
+          for (var i = 0; i < opts.length; i++) {
+            var slug = (opts[i].getAttribute('value') || '').trim().toLowerCase();
+            var title = (opts[i].textContent || '').trim().toLowerCase();
+            // Exact match on slug OR title -> picked.
+            if (t === slug || t === title) {
+              return {
+                slug: opts[i].getAttribute('value'),
+                title: opts[i].textContent
+              };
+            }
+          }
+          return null;
+        }
+
+        function setPickerState(picker, picked) {
+          var slugInput = picker.querySelector('.song-picker-slug');
+          var titleInput = picker.querySelector('.song-picker-title');
+          var hint = picker.querySelector('.picker-hint');
+          if (picked) {
+            slugInput.value = picked.slug;
+            titleInput.value = picked.title;
+            picker.classList.remove('song-picker-bad');
+            picker.classList.add('song-picker-picked');
+            if (hint) hint.textContent = '';
+          } else {
+            slugInput.value = '';
+            picker.classList.remove('song-picker-picked');
+          }
+          updateSubmitState();
+        }
+
+        function clearPicker(picker) {
+          var slugInput = picker.querySelector('.song-picker-slug');
+          slugInput.value = '';
+          picker.classList.remove('song-picker-picked');
+          updateSubmitState();
+        }
+
+        function updateSubmitState() {
+          var btn = document.getElementById('predict-submit-btn');
+          if (!btn) return;
+          var ok = true;
+          for (var i = 0; i < REQUIRED_SLOTS.length; i++) {
+            var hidden = document.getElementById(REQUIRED_SLOTS[i]);
+            if (!hidden || !hidden.value.trim()) {
+              ok = false;
+              break;
+            }
+          }
+          btn.disabled = !ok;
+        }
+
+        function wirePicker(picker) {
+          var titleInput = picker.querySelector('.song-picker-title');
+          var slugInput = picker.querySelector('.song-picker-slug');
+          var hint = picker.querySelector('.picker-hint');
+          var datalistId = titleInput.getAttribute('list');
+          var datalist = document.getElementById(datalistId);
+          var isOptional = picker.classList.contains('song-picker-optional');
+
+          // Input event: try to lock in the slug as soon as the typed value
+          // matches an option (handles native datalist click on Chrome/Edge,
+          // and rapid type-and-pick).
+          titleInput.addEventListener('input', function () {
+            var match = findMatchInDatalist(datalist, titleInput.value);
+            if (match) {
+              setPickerState(picker, match);
+            } else {
+              // Typing on top of a previously-picked entry invalidates it.
+              if (slugInput.value) {
+                clearPicker(picker);
+              }
+            }
+          });
+
+          // Blur: if the typed value doesn't match anything in the list,
+          // clear it and surface a hint. Optional slots that are empty
+          // are fine.
+          titleInput.addEventListener('blur', function () {
+            var typed = (titleInput.value || '').trim();
+            if (!typed) {
+              clearPicker(picker);
+              if (hint) hint.textContent = '';
+              return;
+            }
+            var match = findMatchInDatalist(datalist, typed);
+            if (match) {
+              setPickerState(picker, match);
+              return;
+            }
+            // No match. Keep the typed text so the user sees what they tried,
+            // but clear the slug so the form payload doesn't ship "blarghhh".
+            clearPicker(picker);
+            if (hint) {
+              hint.textContent = isOptional
+                ? "Optional. Leave empty or pick a song from the list."
+                : "Pick a song from the list.";
+            }
+          });
+
+          // Esc clears the picker.
+          titleInput.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Escape') {
+              titleInput.value = '';
+              clearPicker(picker);
+              if (hint) hint.textContent = '';
+            }
+          });
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+          pickers().forEach(wirePicker);
+          // If the server pre-filled valid slugs (e.g. after a server-side
+          // error that preserved valid picks), confirm the picked state.
+          pickers().forEach(function (p) {
+            var slug = p.querySelector('.song-picker-slug');
+            var title = p.querySelector('.song-picker-title');
+            // Only trust a pre-filled slug if it appears valid (non-empty
+            // AND the picker isn't flagged bad by the server).
+            if (slug.value && !p.classList.contains('song-picker-bad')) {
+              p.classList.add('song-picker-picked');
+            } else if (p.classList.contains('song-picker-bad')) {
+              // Server flagged this slot. Clear the hidden slug so resubmit
+              // requires re-picking from the list.
+              slug.value = '';
+            }
+          });
+          updateSubmitState();
+        });
+      })();
+    </script>
+
+    <script>
+      // Lock countdown. Vanilla JS, no framework.
       (function () {
         var el = document.getElementById('lock-countdown');
         if (!el) return;
@@ -115,9 +293,6 @@
             if (!locked) {
               locked = true;
               el.textContent = 'locked';
-              // Reload to fetch the post-lock panel from the server (auth +
-              // lock state are server-rendered; client-side guard is just a
-              // courtesy).
               setTimeout(function () { window.location.reload(); }, 750);
             }
             return;

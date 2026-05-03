@@ -149,6 +149,86 @@ async def test_request_body_is_jsonrpc_tools_call() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_validate_song_slugs_returns_only_real_slugs() -> None:
+    """validate_song_slugs drops slugs that get_song reports as 404."""
+    # Order: tweezer ok, blarghhh -> 404, fluffhead ok.
+    responses = [
+        httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=_mcp_response({"slug": "tweezer", "title": "Tweezer"}),
+        ),
+        httpx.Response(404, text="not found"),
+        httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=_mcp_response({"slug": "fluffhead", "title": "Fluffhead"}),
+        ),
+    ]
+    route = respx.post(URL)
+    route.side_effect = responses
+    async with McpPhishClient(URL) as c:
+        _skip_handshake(c)
+        valid = await c.validate_song_slugs(
+            ["tweezer", "blarghhh", "fluffhead"]
+        )
+    assert valid == {"tweezer", "fluffhead"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_validate_song_slugs_normalizes_and_dedupes_input() -> None:
+    """Whitespace, case, blanks, and duplicates collapse to one call each."""
+    # Two unique slugs -> two calls.
+    responses = [
+        httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=_mcp_response({"slug": "tweezer", "title": "Tweezer"}),
+        ),
+        httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=_mcp_response({"slug": "fluffhead", "title": "Fluffhead"}),
+        ),
+    ]
+    route = respx.post(URL)
+    route.side_effect = responses
+    async with McpPhishClient(URL) as c:
+        _skip_handshake(c)
+        valid = await c.validate_song_slugs(
+            ["TWEEZER", "  tweezer ", "", None, "fluffhead"]  # type: ignore[list-item]
+        )
+    assert valid == {"tweezer", "fluffhead"}
+    assert route.call_count == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_validate_song_slugs_rejects_when_returned_slug_mismatches() -> None:
+    """Defense-in-depth: if get_song returns a different slug, we don't trust it."""
+    respx.post(URL).respond(
+        json=_mcp_response({"slug": "different-song", "title": "Different"}),
+    )
+    async with McpPhishClient(URL) as c:
+        _skip_handshake(c)
+        valid = await c.validate_song_slugs(["tweezer"])
+    assert valid == set()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_validate_song_slugs_empty_input_no_calls() -> None:
+    route = respx.post(URL).respond(json=_mcp_response({}))
+    async with McpPhishClient(URL) as c:
+        _skip_handshake(c)
+        valid = await c.validate_song_slugs([])
+    assert valid == set()
+    assert not route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_initialize_handshake_sends_two_posts_and_session_header() -> None:
     """The first call triggers initialize + initialized notification, then
     tools/call carries the mcp-session-id header.

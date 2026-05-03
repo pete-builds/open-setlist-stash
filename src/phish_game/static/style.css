@@ -80,6 +80,26 @@ input[type="text"] {
 
 .lock { color: var(--muted); }
 
+/* ---- song picker (predict form) ---- */
+.song-picker { margin: 0.5rem 0 0.75rem; }
+.song-picker .picker-hint {
+  margin: 0.2rem 0 0;
+  min-height: 1.05rem;
+  font-size: 0.82rem;
+}
+.song-picker-picked input.song-picker-title {
+  border-color: var(--accent);
+}
+.song-picker-bad input.song-picker-title {
+  border-color: var(--error);
+}
+.song-picker-bad .picker-hint { color: var(--error); }
+
+button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ---- leaderboard ---- */
 
 .scope-tabs {
