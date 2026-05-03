@@ -3,17 +3,23 @@
 Phase 4 source-of-truth: ``PHASE-4-PLAN.md`` §4.
 
 Default cutoff is 22:00 in ``DEFAULT_LOCK_TZ`` on the show date. Operators
-override per-show via ``prediction_locks.lock_at_override`` — when present,
-that value wins.
+override per-show via ``prediction_locks.lock_at_override`` (when present,
+that value wins).
 
 Show selection for the form (session 1):
 - ``ADMIN_SHOW_DATE`` env var (YYYY-MM-DD) if set: that show is the target.
 - Otherwise: pick the first show from ``mcp__phish__recent_shows`` whose
-  date is in the future. If none upcoming, return None — the form will
+  date is in the future. If none upcoming, return None; the form will
   surface a "no upcoming show" message.
 
 Returning a show without a lock row in the DB is fine. We create the lock
 row lazily on the first prediction submit.
+
+Smart-pick assist gating (PHASE-4-PLAN.md §7):
+- ``assist_allowed(pool, show_date, settings)`` returns True iff
+  ``now() >= effective lock_at`` OR ``settings.assist_pre_lock`` is True
+  (dev override only). This is the single helper every assist surface
+  consults; never re-implement the rule per-route.
 """
 
 from __future__ import annotations
@@ -101,6 +107,63 @@ async def get_or_create_lock(
         is_locked=now > effective,
         seconds_until_lock=int((effective - now).total_seconds()),
     )
+
+
+async def read_lock(
+    pool: asyncpg.Pool[Any], show_date: date
+) -> LockState | None:
+    """Read an existing prediction_locks row without creating one.
+
+    Returns None if no row exists. Used by post-lock views that should NOT
+    lazily create a lock for a date that's never been predicted-on.
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT show_date, lock_at, lock_at_override
+              FROM prediction_locks
+             WHERE show_date = $1
+            """,
+            show_date,
+        )
+        if row is None:
+            return None
+        now = await conn.fetchval("SELECT now() AT TIME ZONE 'UTC'")
+    effective = row["lock_at_override"] or row["lock_at"]
+    if not isinstance(now, datetime):
+        raise RuntimeError("could not read DB now()")
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=ZoneInfo("UTC"))
+    if effective.tzinfo is None:
+        effective = effective.replace(tzinfo=ZoneInfo("UTC"))
+    return LockState(
+        show_date=row["show_date"],
+        lock_at=effective,
+        is_locked=now > effective,
+        seconds_until_lock=int((effective - now).total_seconds()),
+    )
+
+
+async def assist_allowed(
+    pool: asyncpg.Pool[Any], show_date: date, settings: Settings
+) -> bool:
+    """Single source of truth for the assist gate (PHASE-4-PLAN.md §7).
+
+    Returns True iff:
+      - the show's lock_at is in the past (post-lock retro is fair game), OR
+      - ``settings.assist_pre_lock`` is True (dev/operator override; MUST
+        stay False in production).
+
+    A missing prediction_locks row is treated as "not yet locked" (the show
+    has never been predicted-on, so there's no public assist to surface).
+    The dev override still applies in that case.
+    """
+    if settings.assist_pre_lock:
+        return True
+    lock = await read_lock(pool, show_date)
+    if lock is None:
+        return False
+    return lock.is_locked
 
 
 async def select_form_show(

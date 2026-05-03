@@ -49,7 +49,13 @@ from phish_game.leaderboard import (
     list_scope_keys,
     normalize_scope,
 )
-from phish_game.locks import LockState, get_or_create_lock, select_form_show
+from phish_game.locks import (
+    LockState,
+    assist_allowed,
+    get_or_create_lock,
+    read_lock,
+    select_form_show,
+)
 from phish_game.logging_setup import configure_logging
 from phish_game.mcp_client import McpPhishClient, McpPhishError
 from phish_game.migrate import run_migrations
@@ -76,6 +82,9 @@ def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
     return {
         "is_locked": lock.is_locked,
         "lock_at_display": local.strftime("%Y-%m-%d %H:%M %Z"),
+        # ISO-8601 with timezone, parseable by JS ``new Date()``. Used by
+        # the predict-page countdown and post-lock panels.
+        "lock_at_iso": lock.lock_at.isoformat(),
         "seconds_until_lock": max(lock.seconds_until_lock, 0),
     }
 
@@ -467,6 +476,186 @@ def build_app(settings: Settings | None = None) -> FastAPI:
         safe_key = "".join(c for c in scope_key if c.isalnum() or c in "-_")
         return await _render_leaderboard(
             request, scope=normalized, scope_key=safe_key or None, partial=partial
+        )
+
+    # ----- post-lock views (assist + read-only predictions) -----------------
+
+    @app.get("/show/{show_date}/predictions", response_class=HTMLResponse)
+    async def show_predictions(
+        request: Request, show_date: date
+    ) -> HTMLResponse:
+        """Read-only post-lock predictions list.
+
+        Pre-lock returns a "predictions hidden until lock" panel. Once the
+        show resolves, scores show up alongside the picks. Before that, only
+        handles + slugs are visible (so a late peek can't leak strategy).
+        """
+        user = await _resolve_user(request)
+        pool = get_pool()
+        lock = await read_lock(pool, show_date)
+        if lock is None:
+            # No prediction_locks row at all means the form was never opened;
+            # treat as "no predictions yet" rather than 404.
+            return _render(
+                request,
+                "show_predictions.html",
+                current_user=user,
+                show_date=show_date,
+                lock=None,
+                rows=[],
+                resolved=False,
+                pre_lock=True,
+            )
+        if not lock.is_locked:
+            # Pre-lock: never list predictions. Renders the panel with a
+            # "open after lock" message.
+            return _render(
+                request,
+                "show_predictions.html",
+                current_user=user,
+                show_date=show_date,
+                lock=_format_lock(lock, cfg),
+                rows=[],
+                resolved=False,
+                pre_lock=True,
+            )
+        # Post-lock: list everyone's picks.
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT u.handle, p.pick_song_slugs, p.opener_slug,
+                       p.closer_slug, p.encore_slug, p.submitted_at, p.score
+                  FROM predictions p
+                  JOIN users u ON u.id = p.user_id
+                 WHERE p.show_date = $1
+                 ORDER BY p.submitted_at ASC
+                """,
+                show_date,
+            )
+            resolved_at = await conn.fetchval(
+                "SELECT resolved_at FROM prediction_locks WHERE show_date = $1",
+                show_date,
+            )
+        # Hide score column until the show is resolved (`resolved_at` set).
+        resolved = resolved_at is not None
+        return _render(
+            request,
+            "show_predictions.html",
+            current_user=user,
+            show_date=show_date,
+            lock=_format_lock(lock, cfg),
+            rows=[dict(r) for r in rows],
+            resolved=resolved,
+            pre_lock=False,
+        )
+
+    @app.get("/show/{show_date}/assist", response_class=HTMLResponse)
+    async def show_assist(
+        request: Request, show_date: date
+    ) -> HTMLResponse:
+        """Post-lock smart-pick assist: gap stats + venue history + recent setlists.
+
+        Gated by ``assist_allowed``. Pre-lock with default config returns a
+        "locked" message linking to the predict form; the assist data is
+        never built or sent in that case.
+        """
+        user = await _resolve_user(request)
+        pool = get_pool()
+        allowed = await assist_allowed(pool, show_date, cfg)
+        if not allowed:
+            lock = await read_lock(pool, show_date)
+            return _render(
+                request,
+                "show_assist.html",
+                current_user=user,
+                show_date=show_date,
+                lock=_format_lock(lock, cfg) if lock else None,
+                allowed=False,
+                gap_chart=[],
+                venue_rows=[],
+                recent_shows=[],
+                show_meta=None,
+            )
+
+        # Allowed. Pull the assist data via mcp-phish. Each block degrades
+        # independently; a failed venue lookup doesn't poison gap stats.
+        gap_chart: list[dict[str, Any]] = []
+        venue_rows: list[dict[str, Any]] = []
+        recent_show_rows: list[dict[str, Any]] = []
+        show_meta: dict[str, Any] | None = None
+        venue_slug: str | None = None
+        try:
+            async with McpPhishClient(
+                cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
+            ) as mcp:
+                # 1. Gap chart: top 20 by gap.
+                try:
+                    gap_chart = await mcp.songs_by_gap(limit=20)
+                except McpPhishError:
+                    logger.warning("songs_by_gap failed in /assist")
+                # 2. Show metadata (for venue slug + setlist context).
+                try:
+                    show_meta = await mcp.get_show(show_date.isoformat())
+                except McpPhishError:
+                    logger.warning(
+                        "get_show failed in /assist",
+                        extra={"show_date": str(show_date)},
+                    )
+                if show_meta:
+                    venue = show_meta.get("venue") or {}
+                    venue_slug = venue.get("slug") or None
+                # 3. Venue history (last 10 shows at the room).
+                if venue_slug:
+                    try:
+                        venue_rows = await mcp.venue_history(
+                            venue_slug, limit=10
+                        )
+                    except McpPhishError:
+                        logger.warning(
+                            "venue_history failed",
+                            extra={"venue_slug": venue_slug},
+                        )
+                # 4. Recent setlists (last 3 shows).
+                try:
+                    recent = await mcp.recent_shows(limit=3)
+                except McpPhishError:
+                    logger.warning("recent_shows failed in /assist")
+                    recent = []
+                for r in recent:
+                    show_id_or_date = str(r.get("date") or "")
+                    if not show_id_or_date:
+                        continue
+                    try:
+                        full = await mcp.get_show(show_id_or_date)
+                    except McpPhishError:
+                        logger.warning(
+                            "get_show failed in /assist recent",
+                            extra={"date": show_id_or_date},
+                        )
+                        continue
+                    recent_show_rows.append(
+                        {
+                            "date": r.get("date"),
+                            "venue_name": r.get("venue_name"),
+                            "location": r.get("location"),
+                            "setlist": full.get("setlist") or [],
+                        }
+                    )
+        except McpPhishError:
+            logger.exception("mcp-phish unreachable in /assist")
+
+        lock = await read_lock(pool, show_date)
+        return _render(
+            request,
+            "show_assist.html",
+            current_user=user,
+            show_date=show_date,
+            lock=_format_lock(lock, cfg) if lock else None,
+            allowed=True,
+            gap_chart=gap_chart,
+            venue_rows=venue_rows,
+            recent_shows=recent_show_rows,
+            show_meta=show_meta,
         )
 
     @app.get("/healthz", include_in_schema=False)

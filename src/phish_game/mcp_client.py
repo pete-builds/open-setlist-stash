@@ -208,6 +208,42 @@ class McpPhishClient:
             raise McpPhishError(f"get_show: unexpected shape {type(row).__name__}")
         return row
 
+    async def songs_by_gap(self, limit: int = 25) -> list[dict[str, Any]]:
+        """Top-N songs ordered by current gap (descending).
+
+        Post-lock assist only; gap counts must NOT leak pre-lock (see
+        PHASE-4-PLAN.md §7). The route layer enforces the gate via
+        ``assist_allowed`` before calling this.
+        """
+        rows = await self._call_tool("songs_by_gap", {"limit": limit})
+        if not isinstance(rows, list):
+            raise McpPhishError(
+                f"songs_by_gap: unexpected shape {type(rows).__name__}"
+            )
+        return rows
+
+    async def venue_history(
+        self, venue_slug: str, limit: int = 25
+    ) -> list[dict[str, Any]]:
+        """Recent shows at a venue, most-recent first.
+
+        Returns ``[]`` for an unknown venue slug rather than raising
+        ``McpPhishNotFound``; the post-lock assist UI degrades gracefully
+        when the venue's slug isn't yet populated in the vault.
+        """
+        try:
+            rows = await self._call_tool(
+                "venue_history",
+                {"venue_slug": venue_slug, "limit": limit},
+            )
+        except McpPhishNotFound:
+            return []
+        if not isinstance(rows, list):
+            raise McpPhishError(
+                f"venue_history: unexpected shape {type(rows).__name__}"
+            )
+        return rows
+
     # ----- transport --------------------------------------------------------
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> Any:

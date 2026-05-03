@@ -3,14 +3,15 @@
 {% block content %}
   <h1>Predict {{ show.show_date }}</h1>
   {% if show.venue_name %}<p>{{ show.venue_name }}{% if show.location %} - {{ show.location }}{% endif %}</p>{% endif %}
-  <p class="lock">
-    {% if lock.is_locked %}
-      <strong>Locked.</strong>
-    {% else %}
+
+  {% if lock.is_locked %}
+    <p class="lock"><strong>Locked</strong> at {{ lock.lock_at_display }}.</p>
+  {% else %}
+    <p class="lock">
       Locks at <strong>{{ lock.lock_at_display }}</strong>
-      ({{ lock.seconds_until_lock }}s from now).
-    {% endif %}
-  </p>
+      (<span id="lock-countdown" data-lock-at="{{ lock.lock_at_iso }}">{{ lock.seconds_until_lock }}s</span> from now).
+    </p>
+  {% endif %}
 
   {% if existing %}
     <div class="card">
@@ -24,12 +25,18 @@
       </ul>
       <p class="muted">One prediction per user per show. Score lands after the resolver runs.</p>
     </div>
-  {% elif lock.is_locked %}
-    <div class="card error-card">
-      <h2>Locked</h2>
+  {% endif %}
+
+  {% if lock.is_locked %}
+    <div class="card error-card" id="locked-panel">
+      <h2>Predictions locked</h2>
       <p>Predictions for this show closed at {{ lock.lock_at_display }}.</p>
+      <p>
+        <a class="btn" href="/show/{{ show.show_date }}/predictions">See everyone's picks</a>
+        <a class="btn" href="/show/{{ show.show_date }}/assist">Post-lock assist</a>
+      </p>
     </div>
-  {% else %}
+  {% elif not existing %}
     {% if error %}
       <p class="error">{{ error }}</p>
     {% endif %}
@@ -75,5 +82,51 @@
         rarity stats unlock after lock_at to keep the contest fair.
       </p>
     </form>
+  {% endif %}
+
+  {% if not lock.is_locked %}
+    <script>
+      // Lock countdown. Vanilla JS, no framework. Re-renders the
+      // #lock-countdown span every second; once we cross lock_at, it
+      // swaps the form area for a "Predictions locked" panel without a
+      // full reload (it triggers a reload to fetch the post-lock view).
+      (function () {
+        var el = document.getElementById('lock-countdown');
+        if (!el) return;
+        var lockAt = new Date(el.dataset.lockAt).getTime();
+        if (isNaN(lockAt)) return;
+        function pad(n) { return n < 10 ? '0' + n : '' + n; }
+        function fmt(seconds) {
+          if (seconds < 0) seconds = 0;
+          var d = Math.floor(seconds / 86400);
+          var h = Math.floor((seconds % 86400) / 3600);
+          var m = Math.floor((seconds % 3600) / 60);
+          var s = Math.floor(seconds % 60);
+          if (d > 0) return d + 'd ' + pad(h) + 'h ' + pad(m) + 'm ' + pad(s) + 's';
+          if (h > 0) return h + 'h ' + pad(m) + 'm ' + pad(s) + 's';
+          if (m > 0) return m + 'm ' + pad(s) + 's';
+          return s + 's';
+        }
+        var locked = false;
+        function tick() {
+          var now = Date.now();
+          var remaining = Math.floor((lockAt - now) / 1000);
+          if (remaining <= 0) {
+            if (!locked) {
+              locked = true;
+              el.textContent = 'locked';
+              // Reload to fetch the post-lock panel from the server (auth +
+              // lock state are server-rendered; client-side guard is just a
+              // courtesy).
+              setTimeout(function () { window.location.reload(); }, 750);
+            }
+            return;
+          }
+          el.textContent = fmt(remaining);
+        }
+        tick();
+        setInterval(tick, 1000);
+      })();
+    </script>
   {% endif %}
 {% endblock %}

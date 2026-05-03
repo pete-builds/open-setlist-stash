@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Assist {{ show_date }}{% endblock %}
+{% block content %}
+  <h1>Post-lock assist</h1>
+  <p class="muted">
+    Show: <strong>{{ show_date }}</strong>{% if show_meta and show_meta.venue and show_meta.venue.name %}
+      at <strong>{{ show_meta.venue.name }}</strong>{% if show_meta.venue.location %} ({{ show_meta.venue.location }}){% endif %}{% endif %}.
+  </p>
+
+  {% if not allowed %}
+    <div class="card">
+      <h2>Assist unlocks at showtime</h2>
+      <p>Gap stats, venue history, and recent setlists unlock once predictions
+      lock for this show. Until then, the contest is human-only.</p>
+      {% if lock %}
+        <p class="muted">Lock: <strong>{{ lock.lock_at_display }}</strong>.</p>
+      {% endif %}
+      <p>
+        <a class="btn" href="/predict/{{ show_date }}">Make your picks</a>
+      </p>
+    </div>
+  {% else %}
+    <p>
+      <a href="/predict/{{ show_date }}">Predict form</a> -
+      <a href="/show/{{ show_date }}/predictions">All picks</a>
+    </p>
+
+    <h2>Songs by gap (top 20)</h2>
+    {% if gap_chart %}
+      <div class="leaderboard-wrap">
+        <table class="leaderboard">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Song</th>
+              <th class="num">Gap</th>
+              <th class="num">Times played</th>
+              <th>Last played</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in gap_chart %}
+              <tr>
+                <td class="num">{{ loop.index }}</td>
+                <td>{{ s.title or s.slug }}</td>
+                <td class="num">{{ s.gap_current if s.gap_current is not none else (s.gap or '-') }}</td>
+                <td class="num">{{ s.times_played or '-' }}</td>
+                <td>{{ s.last_played_date or '-' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">Gap chart unavailable right now.</p>
+    {% endif %}
+
+    <h2>Venue history (last 10)</h2>
+    {% if venue_rows %}
+      <div class="leaderboard-wrap">
+        <table class="leaderboard">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Venue</th>
+              <th>Tour</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for v in venue_rows %}
+              <tr>
+                <td>{{ v.date }}</td>
+                <td>{{ v.venue_name }}{% if v.location %} ({{ v.location }}){% endif %}</td>
+                <td>{{ v.tour_name or '-' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">No venue history available (slug missing or vault offline).</p>
+    {% endif %}
+
+    <h2>Recent setlists (last 3 shows)</h2>
+    {% if recent_shows %}
+      {% for show in recent_shows %}
+        <div class="card">
+          <strong>{{ show.date }}</strong>
+          {% if show.venue_name %} - {{ show.venue_name }}{% endif %}
+          {% if show.location %} ({{ show.location }}){% endif %}
+          <ul>
+            {% for song in show.setlist %}
+              <li>{{ song.set_name }}: {{ song.song_title }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="muted">Recent setlists unavailable right now.</p>
+    {% endif %}
+  {% endif %}
+{% endblock %}

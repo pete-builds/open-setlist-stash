@@ -1,8 +1,15 @@
 """Route tests: handle creation + locked-show submission rejection.
 
-These hit the real FastAPI app with TestClient. The DB fixture is
+These hit the real FastAPI app via ``httpx.AsyncClient`` over an
+``ASGITransport``. That keeps the app on the same event loop as the
+pytest-asyncio test (and therefore the asyncpg pool). The DB fixture is
 ``pg_pool`` from ``conftest.py``; the suite skips when ``TEST_PG_DSN`` is
 not set in env.
+
+Why not Starlette's ``TestClient``? See ``conftest.py`` docstring: the
+TestClient runs the lifespan on a separate event loop via anyio's
+BlockingPortal, which conflicts with the asyncpg pool that the fixture
+creates on the test's own loop.
 """
 
 from __future__ import annotations
@@ -12,37 +19,24 @@ from typing import Any
 
 import asyncpg
 import pytest
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
-from phish_game import db as db_module
+from phish_game.auth import sign_user_id
 from phish_game.config import get_settings
-from phish_game.server import build_app
 from tests.conftest import requires_pg
 
 
-def _client(pool: asyncpg.Pool[Any]) -> TestClient:
-    """Build the app and short-circuit the lifespan to use the test pool."""
-    settings = get_settings()
-    # The lifespan creates its own pool; here we want the test pool injected.
-    db_module._pool = pool  # type: ignore[attr-defined]  # pragma: no mutate
-    app = build_app(settings)
-    # Skip lifespan migrations (already applied by fixture). We use the
-    # raw client without context manager to avoid lifespan triggering.
-    return TestClient(app, raise_server_exceptions=True)
-
-
-@pytest.mark.asyncio
 @requires_pg
 async def test_post_handle_creates_user_and_sets_cookie(
     pg_pool: asyncpg.Pool[Any] | None,
+    async_client: AsyncClient,
 ) -> None:
     assert pg_pool is not None
-    with _client(pg_pool) as client:
-        resp = client.post(
-            "/handle",
-            data={"handle": "tweezer_fan"},
-            follow_redirects=False,
-        )
+    resp = await async_client.post(
+        "/handle",
+        data={"handle": "tweezer_fan"},
+        follow_redirects=False,
+    )
     assert resp.status_code == 303
     assert resp.headers["location"] == "/"
     assert "phishgame_session" in resp.cookies
@@ -56,26 +50,25 @@ async def test_post_handle_creates_user_and_sets_cookie(
     assert row["handle"] == "tweezer_fan"
 
 
-@pytest.mark.asyncio
 @requires_pg
 async def test_post_handle_rejects_bad_format(
     pg_pool: asyncpg.Pool[Any] | None,
+    async_client: AsyncClient,
 ) -> None:
     assert pg_pool is not None
-    with _client(pg_pool) as client:
-        resp = client.post(
-            "/handle",
-            data={"handle": "no spaces allowed"},
-            follow_redirects=False,
-        )
+    resp = await async_client.post(
+        "/handle",
+        data={"handle": "no spaces allowed"},
+        follow_redirects=False,
+    )
     assert resp.status_code == 200  # re-renders the index with the error
     assert "letters, digits" in resp.text.lower() or "characters" in resp.text.lower()
 
 
-@pytest.mark.asyncio
 @requires_pg
 async def test_locked_show_rejects_submission(
     pg_pool: asyncpg.Pool[Any] | None,
+    async_client: AsyncClient,
 ) -> None:
     """If lock_at is in the past, the form returns 409 and the trigger blocks
     direct DB inserts as a backstop.
@@ -116,24 +109,21 @@ async def test_locked_show_rejects_submission(
             )
 
     # The HTTP route returns 409 when the user posts after lock.
-    with _client(pg_pool) as client:
-        # First, mint a session cookie via /handle.
-        from phish_game.auth import sign_user_id
-        client.cookies.set(
-            "phishgame_session",
-            sign_user_id(get_settings(), user_id),
-        )
-        resp = client.post(
-            f"/predict/{show_date.isoformat()}",
-            data={
-                "pick_1": "tweezer",
-                "pick_2": "fluffhead",
-                "pick_3": "harry-hood",
-                "opener_slug": "",
-                "closer_slug": "",
-                "encore_slug": "",
-            },
-            follow_redirects=False,
-        )
+    async_client.cookies.set(
+        "phishgame_session",
+        sign_user_id(get_settings(), user_id),
+    )
+    resp = await async_client.post(
+        f"/predict/{show_date.isoformat()}",
+        data={
+            "pick_1": "tweezer",
+            "pick_2": "fluffhead",
+            "pick_3": "harry-hood",
+            "opener_slug": "",
+            "closer_slug": "",
+            "encore_slug": "",
+        },
+        follow_redirects=False,
+    )
     assert resp.status_code == 409
     assert "locked" in resp.text.lower()

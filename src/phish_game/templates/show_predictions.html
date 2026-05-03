@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Predictions {{ show_date }}{% endblock %}
+{% block content %}
+  <h1>Predictions: {{ show_date }}</h1>
+
+  {% if pre_lock %}
+    <div class="card">
+      <h2>Predictions hidden until lock</h2>
+      <p>
+        Other players' picks reveal at lock_at to keep the contest fair.
+        Until then, only your own prediction is visible (on the predict page).
+      </p>
+      {% if lock %}
+        <p class="muted">Lock: <strong>{{ lock.lock_at_display }}</strong>
+          ({{ lock.seconds_until_lock }}s from now).</p>
+      {% endif %}
+      <p>
+        <a class="btn" href="/predict/{{ show_date }}">Predict form</a>
+      </p>
+    </div>
+  {% else %}
+    {% if lock %}
+      <p class="muted">Lock: <strong>{{ lock.lock_at_display }}</strong>{% if not resolved %} (awaiting resolve){% endif %}.</p>
+    {% endif %}
+    <p>
+      <a href="/predict/{{ show_date }}">Predict form</a> -
+      <a href="/show/{{ show_date }}/assist">Post-lock assist</a>
+    </p>
+
+    {% if rows %}
+      <div class="leaderboard-wrap">
+        <table class="leaderboard">
+          <thead>
+            <tr>
+              <th>Handle</th>
+              <th>Picks</th>
+              <th>Opener</th>
+              <th>Closer</th>
+              <th>Encore</th>
+              {% if resolved %}<th class="num">Score</th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                <td>
+                  <a href="/u/{{ r.handle }}">{{ r.handle }}</a>
+                </td>
+                <td>{{ r.pick_song_slugs | join(', ') }}</td>
+                <td>{{ r.opener_slug or '-' }}</td>
+                <td>{{ r.closer_slug or '-' }}</td>
+                <td>{{ r.encore_slug or '-' }}</td>
+                {% if resolved %}
+                  <td class="num">{{ r.score if r.score is not none else '-' }}</td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        {% if resolved %}
+          Resolved. Scores show the final breakdown after the resolver tick.
+        {% else %}
+          Awaiting resolver. Scores appear once phish.net publishes the setlist.
+        {% endif %}
+      </p>
+    {% else %}
+      <p class="muted">No predictions submitted for this show.</p>
+    {% endif %}
+  {% endif %}
+{% endblock %}

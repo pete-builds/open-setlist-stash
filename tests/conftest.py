@@ -13,7 +13,18 @@ To run the full suite against the live nix1 phish-game-pg container:
 
 Or against any local Postgres with the migrations applied. The fixtures
 truncate the relevant tables between tests, so the DB does NOT need to be
-ephemeral — it only needs to be writable and to have the schema.
+ephemeral; it only needs to be writable and to have the schema.
+
+Route-test gotcha (fixed in build session 7):
+    Starlette's ``TestClient`` runs the FastAPI lifespan via
+    ``anyio.from_thread.BlockingPortal`` on a *different* event loop than the
+    pytest-asyncio one that owns the asyncpg pool. The result is the
+    notorious ``got Future <...> attached to a different loop`` error.
+
+    The fix is ``httpx.AsyncClient(transport=ASGITransport(app))``: it runs
+    the ASGI app inline on the test's loop. The ``async_client`` fixture
+    builds the app with the test pool injected and skips the lifespan
+    (migrations are already applied by ``pg_pool``).
 """
 
 from __future__ import annotations
@@ -25,6 +36,8 @@ from typing import Any
 import asyncpg
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 
 def _test_pg_dsn() -> str | None:
@@ -63,3 +76,46 @@ def requires_pg(fn: Any) -> Any:
         _test_pg_dsn() is None,
         reason="set TEST_PG_DSN to run DB-backed tests",
     )(fn)
+
+
+def build_app_with_pool(pool: asyncpg.Pool[Any]) -> FastAPI:
+    """Build a FastAPI app with the test pool already injected.
+
+    Critically, we do NOT enter the app's lifespan (which would try to create
+    its own pool on a fresh event loop). Migrations have already been applied
+    by the ``pg_pool`` fixture, and the pool is shared via the ``db`` module's
+    private global.
+    """
+    from phish_game import db as db_module
+    from phish_game.config import get_settings
+    from phish_game.server import build_app
+    db_module._pool = pool  # type: ignore[attr-defined]
+    return build_app(get_settings())
+
+
+@pytest_asyncio.fixture
+async def async_client(
+    pg_pool: asyncpg.Pool[Any] | None,
+) -> AsyncIterator[AsyncClient]:
+    """An ``httpx.AsyncClient`` wired to the FastAPI app via ASGITransport.
+
+    Unlike Starlette's ``TestClient``, this runs the ASGI app on the same
+    event loop as the test (and the asyncpg pool). The lifespan is skipped
+    (``lifespan='off'``) because the test pool is already set up.
+
+    Tests requiring a DB should depend on both ``pg_pool`` (skip gate +
+    schema) and ``async_client``.
+    """
+    if pg_pool is None:
+        # The test will skip via @requires_pg before hitting this client,
+        # but we still need to yield something to satisfy the fixture
+        # protocol when the test isn't gated on the pool.
+        async with AsyncClient(base_url="http://test") as client:
+            yield client
+        return
+    app = build_app_with_pool(pg_pool)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        yield client
