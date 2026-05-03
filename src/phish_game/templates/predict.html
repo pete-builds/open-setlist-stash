@@ -47,6 +47,10 @@
           {% set slot = 'pick_' ~ i %}
           {% set initial = form_values.get(slot, '') if form_values else '' %}
           {% set is_bad = initial and initial in bad_slugs %}
+          {# Title input keeps the user's typed text on re-render. Hidden
+             slug ONLY ships if the slot survived validation (i.e. is not
+             bad). For a bad slot, the hidden slug is empty so a JS-off
+             re-submit can't replay the same bogus pick. #}
           <div class="song-picker{% if is_bad %} song-picker-bad{% endif %}" data-slot="{{ slot }}">
             <label for="{{ slot }}_title">Pick {{ i }}{% if is_bad %} <span class="error">(not a real song)</span>{% endif %}</label>
             <input type="text"
@@ -64,7 +68,7 @@
                    autocomplete="off"
                    required>
             <datalist id="songs-list-{{ slot }}"></datalist>
-            <input type="hidden" name="{{ slot }}" id="{{ slot }}" class="song-picker-slug" value="{{ initial }}">
+            <input type="hidden" name="{{ slot }}" id="{{ slot }}" class="song-picker-slug" value="{{ '' if is_bad else initial }}">
             <p class="picker-hint muted" data-for="{{ slot }}"></p>
           </div>
         {% endfor %}
@@ -92,7 +96,7 @@
                    hx-params="q"
                    autocomplete="off">
             <datalist id="songs-list-{{ slot }}"></datalist>
-            <input type="hidden" name="{{ slot }}" id="{{ slot }}" class="song-picker-slug" value="{{ initial }}">
+            <input type="hidden" name="{{ slot }}" id="{{ slot }}" class="song-picker-slug" value="{{ '' if is_bad else initial }}">
             <p class="picker-hint muted" data-for="{{ slot }}"></p>
           </div>
         {% endfor %}
