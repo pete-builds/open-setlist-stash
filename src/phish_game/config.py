@@ -57,6 +57,31 @@ class Settings(BaseSettings):
     # --- Session / handle ---
     session_secret: SecretStr = Field(default=SecretStr("dev-only-do-not-use-in-prod"))
 
+    # --- Magic-link email (Phase 4b) ---
+    # Provider selector. ``disabled`` (default) hides the email UI behind a
+    # 503; ``log`` writes the full message to logger at INFO (used on nix1
+    # until Pete provisions a Gmail app password); ``smtp`` sends via the
+    # configured SMTP_* settings below.
+    email_provider: str = Field(default="disabled")
+    # Base URL used to construct magic-link URLs in the email body.
+    # Defaults to the Tailscale-only nix1 URL. Override per environment
+    # (e.g. ``http://localhost:3706`` for dev, https URL for Phase 6).
+    base_url: str = Field(default="http://nix1:3706")
+    # Magic-link token TTL. 24h matches "click the link from your inbox
+    # later today" expectations without leaving long-lived bearer tokens
+    # outstanding.
+    magic_link_ttl_hours: int = Field(default=24, ge=1, le=168)
+    # Max outstanding (un-consumed, un-expired) magic links per user. New
+    # requests beyond this expire the oldest. Stops accidental "spam me 30
+    # links" loops.
+    magic_link_max_outstanding: int = Field(default=3, ge=1, le=10)
+    # SMTP settings — only consulted when EMAIL_PROVIDER=smtp.
+    smtp_host: str = Field(default="")
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_user: str = Field(default="")
+    smtp_pass: SecretStr = Field(default=SecretStr(""))
+    smtp_from: str = Field(default="")
+
     # --- Smart-pick assist gate ---
     # MUST stay False during the prediction window. See PHASE-4-PLAN.md.
     assist_pre_lock: bool = Field(default=False)

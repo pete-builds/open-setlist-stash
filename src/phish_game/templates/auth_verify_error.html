@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Link not valid — phish-game{% endblock %}
+{% block content %}
+  <h1>That link didn't work</h1>
+  <div class="card error-card">
+    <p>{{ message }}</p>
+  </div>
+  <p class="muted">
+    Magic links expire after {{ ttl_hours }} hours and can only be used
+    once. If your link was used or expired,
+    {% if signed_in %}
+      <a href="/auth/email">request a new verification link</a>
+    {% else %}
+      <a href="/auth/login">request a new sign-in link</a>
+    {% endif %}.
+  </p>
+  <p><a href="/">Back to home</a></p>
+{% endblock %}

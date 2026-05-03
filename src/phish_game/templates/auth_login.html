@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Sign in — phish-game{% endblock %}
+{% block content %}
+  <h1>Sign in by email</h1>
+  <p>
+    Enter the email attached to your phish-game handle. We'll send a one-time
+    sign-in link.
+  </p>
+  <p class="muted">
+    Don't have an account, or never added an email?
+    <a href="/">Pick a fresh handle</a>.
+  </p>
+
+  {% if error %}
+    <p class="error">{{ error }}</p>
+  {% endif %}
+
+  {% if not provider_enabled %}
+    <div class="card error-card">
+      <p>
+        Email is currently disabled on this server. Sign in by email is
+        unavailable. Use the same browser where you originally created your
+        handle, or pick a fresh handle.
+      </p>
+    </div>
+  {% else %}
+    <form method="post" action="/auth/login">
+      <label for="email">Email address</label>
+      <input type="email" id="email" name="email" required maxlength="320"
+             autocomplete="email" autofocus>
+      <button type="submit" class="btn">Send me a sign-in link</button>
+    </form>
+  {% endif %}
+{% endblock %}

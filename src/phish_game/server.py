@@ -39,8 +39,17 @@ from phish_game.auth import (
     sign_user_id,
     validate_handle,
 )
+from phish_game.auth_email import (
+    EmailFormatError,
+    EmailTakenError,
+    get_email_status,
+    request_email_link,
+    request_login_link,
+    verify_token,
+)
 from phish_game.config import Settings, get_settings
 from phish_game.db import close_pool, get_pool, init_pool
+from phish_game.email import EmailProvider, EmailSendError, build_provider
 from phish_game.leaderboard import (
     VALID_SCOPES,
     fetch_leaderboard,
@@ -89,13 +98,20 @@ def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
     }
 
 
-def build_app(settings: Settings | None = None) -> FastAPI:
+def build_app(
+    settings: Settings | None = None,
+    *,
+    email_provider: EmailProvider | None = None,
+) -> FastAPI:
     """Construct the FastAPI app.
 
     Factory pattern so tests can inject a Settings without touching env.
+    Tests can also inject a fake ``email_provider`` directly to avoid the
+    factory + EMAIL_PROVIDER env dance.
     """
     cfg = settings or get_settings()
     configure_logging(cfg.log_format)
+    provider: EmailProvider = email_provider or build_provider(cfg)
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
@@ -657,6 +673,236 @@ def build_app(settings: Settings | None = None) -> FastAPI:
             recent_shows=recent_show_rows,
             show_meta=show_meta,
         )
+
+    # ----- Phase 4b: magic-link email auth ----------------------------------
+
+    def _provider_enabled() -> bool:
+        return provider.name != "disabled"
+
+    @app.get("/auth/email", response_class=HTMLResponse)
+    async def auth_email_form(request: Request) -> Response:
+        """Form to attach (or change) an email on a signed-in handle."""
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        pool = get_pool()
+        status_data = await get_email_status(pool, user.id)
+        return _render(
+            request,
+            "auth_email.html",
+            current_user=user,
+            status=status_data,
+            provider_enabled=_provider_enabled(),
+        )
+
+    @app.post("/auth/email")
+    async def auth_email_submit(
+        request: Request, email: str = Form(...)
+    ) -> Response:
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        if not _provider_enabled():
+            # Don't even try to mint a token if email is off — the user
+            # could never click the link.
+            return JSONResponse(
+                {"error": "Email is disabled on this server."},
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        pool = get_pool()
+        try:
+            masked = await request_email_link(
+                pool,
+                user=user,
+                email=email,
+                settings=cfg,
+                provider=provider,
+            )
+        except EmailFormatError as exc:
+            status_data = await get_email_status(pool, user.id)
+            resp = _render(
+                request,
+                "auth_email.html",
+                current_user=user,
+                status=status_data,
+                provider_enabled=True,
+                error=str(exc),
+            )
+            resp.status_code = status.HTTP_400_BAD_REQUEST
+            return resp
+        except EmailTakenError as exc:
+            status_data = await get_email_status(pool, user.id)
+            resp = _render(
+                request,
+                "auth_email.html",
+                current_user=user,
+                status=status_data,
+                provider_enabled=True,
+                error=str(exc),
+            )
+            resp.status_code = status.HTTP_409_CONFLICT
+            return resp
+        except EmailSendError as exc:
+            logger.warning("email send failed", extra={"err": str(exc)})
+            status_data = await get_email_status(pool, user.id)
+            resp = _render(
+                request,
+                "auth_email.html",
+                current_user=user,
+                status=status_data,
+                provider_enabled=True,
+                error="Could not send email right now. Try again shortly.",
+            )
+            resp.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return resp
+        return _render(
+            request,
+            "auth_email_sent.html",
+            current_user=user,
+            masked_email=masked,
+            ttl_hours=cfg.magic_link_ttl_hours,
+            log_mode=(provider.name == "log"),
+        )
+
+    @app.get("/auth/login", response_class=HTMLResponse)
+    async def auth_login_form(request: Request) -> Response:
+        """Cross-browser sign-in: enter your verified email, get a link."""
+        # If already signed in, send to /account.
+        user = await _resolve_user(request)
+        if user is not None:
+            return RedirectResponse(
+                "/account", status_code=status.HTTP_303_SEE_OTHER
+            )
+        return _render(
+            request,
+            "auth_login.html",
+            current_user=None,
+            provider_enabled=_provider_enabled(),
+        )
+
+    @app.post("/auth/login")
+    async def auth_login_submit(
+        request: Request, email: str = Form(...)
+    ) -> Response:
+        user = await _resolve_user(request)
+        if user is not None:
+            return RedirectResponse(
+                "/account", status_code=status.HTTP_303_SEE_OTHER
+            )
+        if not _provider_enabled():
+            return JSONResponse(
+                {"error": "Email is disabled on this server."},
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        pool = get_pool()
+        try:
+            masked = await request_login_link(
+                pool, email=email, settings=cfg, provider=provider
+            )
+        except EmailFormatError as exc:
+            resp = _render(
+                request,
+                "auth_login.html",
+                current_user=None,
+                provider_enabled=True,
+                error=str(exc),
+            )
+            resp.status_code = status.HTTP_400_BAD_REQUEST
+            return resp
+        except EmailSendError:
+            resp = _render(
+                request,
+                "auth_login.html",
+                current_user=None,
+                provider_enabled=True,
+                error="Could not send email right now. Try again shortly.",
+            )
+            resp.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return resp
+        return _render(
+            request,
+            "auth_login_sent.html",
+            current_user=None,
+            masked_email=masked,
+            ttl_hours=cfg.magic_link_ttl_hours,
+            log_mode=(provider.name == "log"),
+        )
+
+    @app.get("/auth/verify", response_class=HTMLResponse)
+    async def auth_verify(
+        request: Request, token: str = Query("", min_length=0, max_length=512)
+    ) -> Response:
+        """Consume a magic-link token (either purpose).
+
+        On success: set/refresh the session cookie to the verified user's
+        id and redirect to /account with a flash message in the cookie.
+        On failure: render auth_verify_error.html with a clean message.
+        """
+        # Capture caller IP for audit. Trust the immediate peer here; the
+        # platform is LAN/Tailscale only through Phase 5 so X-Forwarded-For
+        # would be moot.
+        client_ip: str | None = None
+        if request.client and request.client.host:
+            client_ip = request.client.host
+
+        already_signed_in = (await _resolve_user(request)) is not None
+        pool = get_pool()
+        try:
+            result = await verify_token(pool, token=token, ip=client_ip)
+        except LookupError as exc:
+            err_resp = _render(
+                request,
+                "auth_verify_error.html",
+                current_user=await _resolve_user(request),
+                message=str(exc),
+                ttl_hours=cfg.magic_link_ttl_hours,
+                signed_in=already_signed_in,
+            )
+            err_resp.status_code = status.HTTP_400_BAD_REQUEST
+            return err_resp
+        # Success: set the session cookie to the verified user's id, then
+        # redirect to /account. Even for email_verify (where the user was
+        # likely already signed in as that user), refreshing the cookie is
+        # idempotent and ensures cross-browser flows land on the right id.
+        flash = (
+            "Email verified. You can now sign in from another browser."
+            if result.purpose == "email_verify"
+            else f"Signed in as {result.handle}."
+        )
+        resp: Response = RedirectResponse(
+            "/account", status_code=status.HTTP_303_SEE_OTHER
+        )
+        _set_session_cookie(resp, result.user_id)
+        # Short-lived flash cookie: rendered once and cleared by /account.
+        resp.set_cookie(
+            "phishgame_flash",
+            flash,
+            max_age=30,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+        )
+        return resp
+
+    @app.get("/account", response_class=HTMLResponse)
+    async def account_page(request: Request) -> Response:
+        """Show handle + email status. Sign-in required."""
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        pool = get_pool()
+        status_data = await get_email_status(pool, user.id)
+        flash = request.cookies.get("phishgame_flash")
+        resp = _render(
+            request,
+            "account.html",
+            current_user=user,
+            status=status_data,
+            flash=flash,
+        )
+        if flash:
+            resp.delete_cookie("phishgame_flash")
+        return resp
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:

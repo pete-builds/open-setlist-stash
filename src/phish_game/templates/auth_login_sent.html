@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Check your inbox — phish-game{% endblock %}
+{% block content %}
+  <h1>Check your inbox</h1>
+  <div class="card">
+    <p>
+      If <strong>{{ masked_email }}</strong> matches a verified phish-game
+      account, we just emailed a one-time sign-in link.
+    </p>
+    <p>
+      Click the link within {{ ttl_hours }} hours. The link can only be
+      used once.
+    </p>
+  </div>
+  <p class="muted">
+    Didn't get it? Either the address isn't attached to a verified handle,
+    or it landed in spam. <a href="/auth/login">Try again</a>.
+  </p>
+  {% if log_mode %}
+    <div class="card">
+      <p class="muted">
+        <strong>Dev note:</strong> EMAIL_PROVIDER=log. The link was written
+        to the container logs.
+      </p>
+    </div>
+  {% endif %}
+{% endblock %}

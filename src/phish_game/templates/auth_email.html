@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Add email — phish-game{% endblock %}
+{% block content %}
+  <h1>Attach email to your handle</h1>
+  <p>
+    Adding an email lets you sign in from another browser later. Until you
+    click the verification link in your inbox, your handle stays
+    anonymous-only.
+  </p>
+  <p class="muted">
+    Phase 4b: phish-game is Tailscale/LAN only, so the magic link will
+    only open from a device that's on your tailnet. Plan accordingly.
+  </p>
+
+  {% if status and status.email %}
+    {% if status.verified %}
+      <div class="card">
+        <p>Current email: <strong>{{ status.masked }}</strong> (verified).</p>
+        <p class="muted">You can change it by submitting a new address below.</p>
+      </div>
+    {% elif status.pending %}
+      <div class="card">
+        <p>
+          Pending verification: <strong>{{ status.masked }}</strong>.
+          Check your inbox for the link, or request a new one below.
+        </p>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  {% if error %}
+    <p class="error">{{ error }}</p>
+  {% endif %}
+
+  {% if not provider_enabled %}
+    <div class="card error-card">
+      <p>
+        Email is currently disabled on this server (EMAIL_PROVIDER=disabled).
+        Set <code>EMAIL_PROVIDER=log</code> for dev or <code>smtp</code> for
+        production and restart the container.
+      </p>
+    </div>
+  {% else %}
+    <form method="post" action="/auth/email">
+      <label for="email">Email address</label>
+      <input type="email" id="email" name="email" required maxlength="320"
+             autocomplete="email" autofocus>
+      <button type="submit" class="btn">Send me a link</button>
+    </form>
+  {% endif %}
+
+  <p class="muted"><a href="/account">Back to account</a></p>
+{% endblock %}

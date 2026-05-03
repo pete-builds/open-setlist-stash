@@ -31,6 +31,7 @@ dependencies = [
     "python-multipart==0.0.27",
     "itsdangerous==2.2.0",
     "python-dotenv==1.2.2",
+    "aiosmtplib==4.0.2",
 ]
 
 [project.optional-dependencies]
