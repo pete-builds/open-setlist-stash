@@ -63,6 +63,12 @@ services:
       - default
       - mcp-phish
     entrypoint: ["python", "-m", "phish_game.resolve", "--loop"]
+    # The Dockerfile inherits a /healthz HEALTHCHECK from the FastAPI app.
+    # The resolver container does not run the HTTP server, so disable it.
+    # Container liveness here is "process is running"; tick health is
+    # surfaced via /healthz on the main app via scoring_runs.
+    healthcheck:
+      disable: true
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
