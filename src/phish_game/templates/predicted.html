@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Submitted - {{ show_date }}{% endblock %}
+{% block content %}
+  <h1>Prediction submitted</h1>
+  <p>Locked in for <strong>{{ show_date }}</strong>.</p>
+  <ul>
+    <li>Picks: {{ pick_song_slugs | join(', ') }}</li>
+    <li>Opener: {{ opener_slug or '-' }}</li>
+    <li>Closer: {{ closer_slug or '-' }}</li>
+    <li>Encore: {{ encore_slug or '-' }}</li>
+  </ul>
+  <p class="muted">
+    Score lands once the resolver picks up the published setlist.
+    Leaderboards (weekly / tour / all-time) ship in a later session.
+  </p>
+  <p><a class="btn" href="/">Home</a></p>
+{% endblock %}

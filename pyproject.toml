@@ -127,3 +127,7 @@ disallow_any_generics = true
 mypy_path = ["src"]
 files = ["src/phish_game"]
 explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = "asyncpg.*"
+ignore_missing_imports = true

@@ -6,6 +6,8 @@ All values come from environment variables (or `.env` in dev). Secrets use
 
 from __future__ import annotations
 
+from datetime import date
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -49,6 +51,14 @@ class Settings(BaseSettings):
     # --- Smart-pick assist gate ---
     # MUST stay False during the prediction window. See PHASE-4-PLAN.md.
     assist_pre_lock: bool = Field(default=False)
+
+    # --- Predict form show selection ---
+    # Operator override. When set, the predict form targets this show.
+    # When unset, ``select_form_show`` walks ``recent_shows`` for the next
+    # future date.
+    admin_show_date: date | None = Field(default=None)
+    admin_show_venue: str | None = Field(default=None)
+    admin_show_location: str | None = Field(default=None)
 
     @property
     def pg_dsn(self) -> str:

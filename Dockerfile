@@ -41,6 +41,9 @@ RUN groupadd --system --gid 1000 game \
 
 WORKDIR /app
 COPY --from=builder /wheels /app/site-packages
+# Migrations live next to the package so the migrate runner can read them
+# without packaging SQL into the wheel.
+COPY migrations/ /app/migrations/
 RUN chown -R game:game /app
 
 USER game

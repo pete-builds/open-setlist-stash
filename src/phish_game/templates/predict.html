@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Predict {{ show.show_date }}{% endblock %}
+{% block content %}
+  <h1>Predict {{ show.show_date }}</h1>
+  {% if show.venue_name %}<p>{{ show.venue_name }}{% if show.location %} - {{ show.location }}{% endif %}</p>{% endif %}
+  <p class="lock">
+    {% if lock.is_locked %}
+      <strong>Locked.</strong>
+    {% else %}
+      Locks at <strong>{{ lock.lock_at_display }}</strong>
+      ({{ lock.seconds_until_lock }}s from now).
+    {% endif %}
+  </p>
+
+  {% if existing %}
+    <div class="card">
+      <h2>You already submitted</h2>
+      <p>Submitted at {{ existing.submitted_at }}.</p>
+      <ul>
+        <li>Picks: {{ existing.pick_song_slugs | join(', ') }}</li>
+        <li>Opener: {{ existing.opener_slug or '-' }}</li>
+        <li>Closer: {{ existing.closer_slug or '-' }}</li>
+        <li>Encore: {{ existing.encore_slug or '-' }}</li>
+      </ul>
+      <p class="muted">One prediction per user per show. Score lands after the resolver runs.</p>
+    </div>
+  {% elif lock.is_locked %}
+    <div class="card error-card">
+      <h2>Locked</h2>
+      <p>Predictions for this show closed at {{ lock.lock_at_display }}.</p>
+    </div>
+  {% else %}
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
+    <form method="post" action="/predict/{{ show.show_date }}" id="predict-form">
+      <fieldset>
+        <legend>Three songs (any set)</legend>
+        {% for i in [1, 2, 3] %}
+          <label for="pick-{{ i }}">Pick {{ i }}</label>
+          <input type="text" id="pick-{{ i }}" name="pick_{{ i }}" required
+                 list="songs-list" placeholder="e.g. tweezer"
+                 hx-get="/songs/search"
+                 hx-trigger="input changed delay:200ms, focus"
+                 hx-target="#songs-list"
+                 hx-swap="innerHTML"
+                 hx-include="this"
+                 hx-params="q"
+                 autocomplete="off">
+        {% endfor %}
+      </fieldset>
+
+      <fieldset>
+        <legend>Slot picks (optional)</legend>
+        <label for="opener_slug">Opener</label>
+        <input type="text" id="opener_slug" name="opener_slug" list="songs-list"
+               placeholder="optional" autocomplete="off">
+
+        <label for="closer_slug">Closer</label>
+        <input type="text" id="closer_slug" name="closer_slug" list="songs-list"
+               placeholder="optional" autocomplete="off">
+
+        <label for="encore_slug">Encore</label>
+        <input type="text" id="encore_slug" name="encore_slug" list="songs-list"
+               placeholder="optional" autocomplete="off">
+      </fieldset>
+
+      <datalist id="songs-list">
+        <!-- populated via HTMX from /songs/search -->
+      </datalist>
+
+      <button type="submit" class="btn">Submit prediction</button>
+      <p class="muted">
+        Pre-lock UI shows form + countdown only. Gap, last-played, and
+        rarity stats unlock after lock_at to keep the contest fair.
+      </p>
+    </form>
+  {% endif %}
+{% endblock %}

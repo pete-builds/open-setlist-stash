@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}phish-game{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">phish-game</a>
+    {% if current_user %}
+      <span class="handle">handle: <strong>{{ current_user.handle }}</strong></span>
+      <span class="claim-stub" title="Email-bound recovery lands in Phase 4b.">
+        (claim with email — coming Phase 4b)
+      </span>
+    {% endif %}
+  </header>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">
+    <small>Phase 4 build. Tailscale/LAN only. v{{ version }}.</small>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,128 @@
+"""mcp-phish client wrapper tests.
+
+The `respx` library mocks httpx at the transport layer. We assert wire
+contract (POST + JSON-RPC body), the FastMCP `content[0].text` unwrap, the
+gap -> gap_current normalization, and the pre-lock-safe shape stripping.
+"""
+
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+import respx
+
+from phish_game.mcp_client import McpPhishClient, McpPhishNotFound, McpPhishUnavailable
+
+URL = "http://mcp-phish:3705/mcp"
+
+
+def _mcp_response(payload: dict, request_id: str = "abc") -> dict:
+    """Build a FastMCP-shaped JSON-RPC response."""
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": {
+            "content": [
+                {"type": "text", "text": json.dumps({"data": payload})}
+            ],
+            "isError": False,
+        },
+    }
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_recent_shows_returns_list() -> None:
+    expected = [{"show_id": "1", "date": "2026-05-01", "venue_name": "Sphere"}]
+    respx.post(URL).respond(json=_mcp_response(expected))
+    async with McpPhishClient(URL) as c:
+        rows = await c.recent_shows(limit=5)
+    assert rows == expected
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_song_normalizes_gap_to_gap_current() -> None:
+    upstream = {"slug": "tweezer", "title": "Tweezer", "gap": 6, "times_played": 456}
+    respx.post(URL).respond(json=_mcp_response(upstream))
+    async with McpPhishClient(URL) as c:
+        row = await c.get_song("tweezer")
+    assert row["gap_current"] == 6
+    # Original gap stays available for any post-lock UI that wants it.
+    assert row["gap"] == 6
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_search_songs_pre_lock_strips_to_slug_and_title() -> None:
+    """PHASE-4-PLAN §7: pre-lock autocomplete is fair-play safe."""
+    upstream = [
+        {"slug": "tweezer", "title": "Tweezer", "times_played": 456, "original": True},
+        {"slug": "tweezer-reprise", "title": "Tweezer Reprise", "times_played": 340},
+    ]
+    respx.post(URL).respond(json=_mcp_response(upstream))
+    async with McpPhishClient(URL) as c:
+        rows = await c.search_songs_pre_lock("tweez")
+    assert rows == [
+        {"slug": "tweezer", "title": "Tweezer"},
+        {"slug": "tweezer-reprise", "title": "Tweezer Reprise"},
+    ]
+    # Hard-lock against assist-data leakage.
+    for r in rows:
+        assert "times_played" not in r
+        assert "gap" not in r
+        assert "gap_current" not in r
+        assert "original" not in r
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_search_songs_full_keeps_assist_fields() -> None:
+    upstream = [{"slug": "tweezer", "title": "Tweezer", "times_played": 456}]
+    respx.post(URL).respond(json=_mcp_response(upstream))
+    async with McpPhishClient(URL) as c:
+        rows = await c.search_songs_full("tweez")
+    assert rows[0]["times_played"] == 456
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_5xx_raises_unavailable() -> None:
+    respx.post(URL).respond(status_code=503, text="upstream down")
+    with pytest.raises(McpPhishUnavailable):
+        async with McpPhishClient(URL) as c:
+            await c.health()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_4xx_raises_notfound() -> None:
+    respx.post(URL).respond(status_code=404, text="unknown method")
+    with pytest.raises(McpPhishNotFound):
+        async with McpPhishClient(URL) as c:
+            await c.get_song("nothing")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_network_error_raises_unavailable() -> None:
+    respx.post(URL).mock(side_effect=httpx.ConnectError("dns fail"))
+    with pytest.raises(McpPhishUnavailable):
+        async with McpPhishClient(URL) as c:
+            await c.health()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_request_body_is_jsonrpc_tools_call() -> None:
+    route = respx.post(URL).respond(json=_mcp_response({"status": "ok"}))
+    async with McpPhishClient(URL) as c:
+        await c.health()
+    assert route.called
+    sent = json.loads(route.calls[0].request.content.decode())
+    assert sent["jsonrpc"] == "2.0"
+    assert sent["method"] == "tools/call"
+    assert sent["params"]["name"] == "health"
+    assert sent["params"]["arguments"] == {}
