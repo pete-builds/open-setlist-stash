@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ league.name }} — settings{% endblock %}
+{% block content %}
+  <h1>{{ league.name }} — settings</h1>
+  <p class="muted">
+    Host-only. <a href="/league/{{ league.slug }}">Back to league</a>.
+  </p>
+
+  {% if flash %}
+    <div class="card"><p>{{ flash }}</p></div>
+  {% endif %}
+  {% if error %}
+    <p class="error">{{ error }}</p>
+  {% endif %}
+
+  <h2>Edit league</h2>
+  <form method="post" action="/league/{{ league.slug }}/settings">
+    <fieldset>
+      <legend>Details</legend>
+
+      <label for="name">Name</label>
+      <input type="text" id="name" name="name" required minlength="1"
+             maxlength="80" value="{{ league.name }}">
+
+      <label for="start_date">Start date (optional)</label>
+      <input type="date" id="start_date" name="start_date"
+             value="{{ league.start_date.isoformat() if league.start_date else '' }}">
+
+      <label for="end_date">End date (optional)</label>
+      <input type="date" id="end_date" name="end_date"
+             value="{{ league.end_date.isoformat() if league.end_date else '' }}">
+
+      <p class="muted">
+        Leave the date fields blank to count every Phish show forever.
+      </p>
+    </fieldset>
+    <button type="submit" class="btn">Save changes</button>
+  </form>
+
+  <h2>Rotate invite slug</h2>
+  <div class="card">
+    <p>
+      Current slug: <code>{{ league.slug }}</code>
+    </p>
+    <p>
+      Rotating generates a fresh URL. The old URL stops working
+      immediately. Existing members keep their membership.
+    </p>
+    <form method="post" action="/league/{{ league.slug }}/rotate"
+          onsubmit="return confirm('Rotate invite slug? The old URL stops working immediately.');">
+      <button type="submit" class="btn">Rotate slug</button>
+    </form>
+  </div>
+
+  <h2>Delete league</h2>
+  <div class="card error-card">
+    <p>
+      Soft-delete this league. The URL stops resolving and members lose
+      access from their /leagues page. Predictions are NOT touched —
+      they keep counting globally and in every other league.
+    </p>
+    <form method="post" action="/league/{{ league.slug }}/delete"
+          onsubmit="return confirm('Delete {{ league.name }}? This cannot be undone.');">
+      <button type="submit" class="btn">Delete league</button>
+    </form>
+  </div>
+{% endblock %}

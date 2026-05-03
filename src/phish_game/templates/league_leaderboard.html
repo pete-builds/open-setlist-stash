@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ league.name }} — leaderboard{% endblock %}
+{% block content %}
+  <h1>{{ league.name }} — leaderboard</h1>
+  <p class="muted">
+    Private league &middot; {{ member_count }} member{% if member_count != 1 %}s{% endif %}
+    &middot; <a href="/league/{{ league.slug }}">League home</a>
+    {% if league.start_date or league.end_date %}
+      &middot; Tour window:
+      {{ league.start_date or 'open' }} to {{ league.end_date or 'open' }}
+    {% endif %}
+  </p>
+
+  <div id="leaderboard-table" class="leaderboard-wrap">
+    {% if not rows %}
+      <div class="card">
+        <h2>No scores yet</h2>
+        <p class="muted">
+          League leaderboards refresh after each resolver tick that scores
+          at least one show. Once your members start submitting picks and
+          the resolver runs, you'll see standings here.
+        </p>
+      </div>
+    {% else %}
+      <table class="leaderboard">
+        <thead>
+          <tr>
+            <th class="num">Rank</th>
+            <th>Handle</th>
+            <th class="num">Score</th>
+            <th class="num">Shows</th>
+            <th>Refreshed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr {% if current_user and current_user.handle == row.handle %}class="is-me"{% endif %}>
+              <td class="num">#{{ row.rank }}</td>
+              <td><a href="/u/{{ row.handle }}">{{ row.handle }}</a>{% if current_user and current_user.handle == row.handle %} <span class="me-tag">you</span>{% endif %}</td>
+              <td class="num">{{ row.total_score }}</td>
+              <td class="num">{{ row.shows_played }}</td>
+              <td class="muted">{{ row.refreshed_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  {% if user_row %}
+    <p class="muted">
+      Your rank in this league:
+      <strong>#{{ user_row.rank }}</strong>
+      ({{ user_row.total_score }} pts across
+      {{ user_row.shows_played }} show{% if user_row.shows_played != 1 %}s{% endif %}).
+    </p>
+  {% endif %}
+
+  <p class="muted">
+    Same picks, multiple leaderboards. Predictions count globally and
+    inside every league you've joined.
+  </p>
+{% endblock %}

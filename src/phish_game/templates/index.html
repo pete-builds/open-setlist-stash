@@ -9,9 +9,15 @@
         {% if upcoming_show.venue_name %}— {{ upcoming_show.venue_name }}{% endif %}
         {% if upcoming_show.location %} ({{ upcoming_show.location }}){% endif %}.
       </p>
-      <p><a class="btn" href="/predict/{{ upcoming_show.show_date }}">Make your picks</a></p>
+      <p>
+        <a class="btn" href="/predict/{{ upcoming_show.show_date }}">Make your picks</a>
+        <a class="btn" href="/leagues">Create or join a league</a>
+      </p>
     {% else %}
       <p class="muted">No upcoming show on the board yet. Check back soon.</p>
+      <p>
+        <a class="btn" href="/leagues">Create or join a league</a>
+      </p>
     {% endif %}
   {% else %}
     <h2>Pick a handle</h2>

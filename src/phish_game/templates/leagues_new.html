@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}New league — phish-game{% endblock %}
+{% block content %}
+  <h1>Create a league</h1>
+
+  <p class="muted">
+    Anyone with the league URL can join. You can rotate the URL later.
+    Member cap: {{ member_cap }}.
+  </p>
+
+  {% if error %}
+    <p class="error">{{ error }}</p>
+  {% endif %}
+
+  <form method="post" action="/leagues/new">
+    <fieldset>
+      <legend>League</legend>
+
+      <label for="name">Name</label>
+      <input type="text" id="name" name="name" required minlength="1"
+             maxlength="80" autofocus
+             value="{{ form_name or '' }}"
+             placeholder="Tweezerheads United">
+
+      <label for="start_date">Start date (optional)</label>
+      <input type="date" id="start_date" name="start_date"
+             value="{{ form_start or '' }}">
+
+      <label for="end_date">End date (optional)</label>
+      <input type="date" id="end_date" name="end_date"
+             value="{{ form_end or '' }}">
+
+      <p class="muted">
+        Leave the dates blank to score every Phish show forever.
+        Set them to scope the leaderboard to a specific tour.
+      </p>
+    </fieldset>
+
+    <button type="submit" class="btn">Create league</button>
+  </form>
+{% endblock %}

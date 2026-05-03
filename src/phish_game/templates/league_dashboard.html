@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ league.name }} — phish-game{% endblock %}
+{% block content %}
+  <h1>{{ league.name }}</h1>
+  <p class="muted">
+    {{ member_count }} member{% if member_count != 1 %}s{% endif %}
+    &middot; <code>/league/{{ league.slug }}</code>
+    {% if is_host %}<span class="me-tag">host</span>{% endif %}
+    {% if league.start_date or league.end_date %}
+      &middot; Tour window:
+      {{ league.start_date or 'open' }} to {{ league.end_date or 'open' }}
+    {% endif %}
+  </p>
+
+  {% if flash %}
+    <div class="card"><p>{{ flash }}</p></div>
+  {% endif %}
+
+  <p>
+    <a class="btn" href="/league/{{ league.slug }}/leaderboard">Leaderboard</a>
+    {% if upcoming_show %}
+      <a class="btn" href="/predict/{{ upcoming_show.show_date }}">Predict next show</a>
+    {% endif %}
+    {% if is_host %}
+      <a class="btn" href="/league/{{ league.slug }}/settings">Settings</a>
+    {% endif %}
+  </p>
+
+  <h2>Invite link</h2>
+  <div class="card">
+    <p>
+      Share this URL with friends. Anyone with the link can join (up to
+      {{ league.member_cap }} members).
+    </p>
+    <p><code>{{ invite_url }}</code></p>
+    {% if is_host %}
+      <p class="muted">
+        Need a fresh URL? <a href="/league/{{ league.slug }}/settings">Rotate the slug</a>
+        from settings. The old URL will stop working immediately; existing
+        members keep their spots.
+      </p>
+    {% endif %}
+  </div>
+
+  <h2>Members</h2>
+  {% if members %}
+    <ul class="member-list">
+      {% for m in members %}
+        <li>
+          <a href="/u/{{ m.handle }}">{{ m.handle }}</a>
+          {% if m.role == 'host' %}<span class="me-tag">host</span>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">No members yet.</p>
+  {% endif %}
+
+  {% if not is_host %}
+    <h2>Leave league</h2>
+    <form method="post" action="/league/{{ league.slug }}/leave"
+          onsubmit="return confirm('Leave {{ league.name }}? You can rejoin from the same URL later.');">
+      <button type="submit" class="btn">Leave league</button>
+    </form>
+  {% endif %}
+{% endblock %}

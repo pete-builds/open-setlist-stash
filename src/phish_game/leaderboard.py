@@ -174,6 +174,133 @@ async def rebuild_all(pool: asyncpg.Pool[Any]) -> dict[str, int]:
     return out
 
 
+# ----- league scope (Phase 4c) ----------------------------------------------
+
+
+async def rebuild_leagues(pool: asyncpg.Pool[Any]) -> dict[str, int]:
+    """Rebuild a per-league leaderboard for every active league.
+
+    For each non-deleted league, recompute ``total_score`` and
+    ``shows_played`` for every member, optionally filtered to
+    ``[start_date, end_date]`` when the league has a tour window set.
+    Inserts into ``leaderboard_snapshots`` with ``scope='league'`` and
+    ``scope_key=league.slug``.
+
+    Each league rebuild is its own transaction (DELETE-by-scope_key +
+    INSERTs). A failure on one league does NOT block others.
+
+    Returns ``{slug: rows_written}``. ``-1`` is the sentinel for "this
+    league errored; check logs."
+    """
+    out: dict[str, int] = {}
+    async with pool.acquire() as conn:
+        leagues = await conn.fetch(
+            """
+            SELECT id, slug, start_date, end_date
+              FROM leagues
+             WHERE deleted_at IS NULL
+            """
+        )
+    for league_row in leagues:
+        slug = str(league_row["slug"])
+        try:
+            out[slug] = await _rebuild_one_league(
+                pool,
+                league_id=int(league_row["id"]),
+                slug=slug,
+                start_date=league_row["start_date"],
+                end_date=league_row["end_date"],
+            )
+        except Exception:
+            logger.exception(
+                "league leaderboard rebuild failed",
+                extra={"slug": slug},
+            )
+            out[slug] = -1
+    return out
+
+
+async def _rebuild_one_league(
+    pool: asyncpg.Pool[Any],
+    *,
+    league_id: int,
+    slug: str,
+    start_date: Any,
+    end_date: Any,
+) -> int:
+    """Atomically rebuild ``scope='league', scope_key=<slug>``.
+
+    Tour window: when ``start_date`` is set, only predictions whose
+    ``show_date >= start_date`` are counted; same for ``end_date`` /
+    ``<= end_date``. Both nullable; both inclusive when set.
+
+    Predictions filter:
+      - ``score IS NOT NULL`` (resolved)
+      - user is in ``league_members`` for this league
+      - show_date within optional tour window
+    """
+    sql = """
+        WITH agg AS (
+            SELECT
+                p.user_id,
+                u.handle,
+                SUM(p.score)::int           AS total_score,
+                COUNT(*)::int               AS shows_played,
+                MIN(p.submitted_at)         AS first_submitted_at
+            FROM predictions p
+            JOIN users u ON u.id = p.user_id
+            JOIN league_members lm ON lm.user_id = p.user_id
+            WHERE p.score IS NOT NULL
+              AND lm.league_id = $1
+              AND ($3::date IS NULL OR p.show_date >= $3)
+              AND ($4::date IS NULL OR p.show_date <= $4)
+            GROUP BY p.user_id, u.handle
+        ),
+        ranked AS (
+            SELECT
+                'league'::text AS scope,
+                $2::text AS scope_key,
+                user_id,
+                handle,
+                total_score,
+                shows_played,
+                RANK() OVER (
+                    ORDER BY total_score DESC, first_submitted_at ASC, handle ASC
+                ) AS rank
+            FROM agg
+        ),
+        deleted AS (
+            DELETE FROM leaderboard_snapshots
+             WHERE scope = 'league' AND scope_key = $2
+            RETURNING 1
+        ),
+        inserted AS (
+            INSERT INTO leaderboard_snapshots
+                (scope, scope_key, user_id, handle, total_score, shows_played, rank, refreshed_at)
+            SELECT
+                scope, scope_key, user_id, handle, total_score, shows_played, rank, now()
+            FROM ranked
+            RETURNING 1
+        )
+        SELECT
+            (SELECT COUNT(*) FROM deleted)  AS deleted_count,
+            (SELECT COUNT(*) FROM inserted) AS inserted_count
+    """
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(sql, league_id, slug, start_date, end_date)
+    inserted = int(row["inserted_count"]) if row else 0
+    deleted = int(row["deleted_count"]) if row else 0
+    logger.info(
+        "league leaderboard rebuilt",
+        extra={
+            "scope_key": slug,
+            "deleted": deleted,
+            "inserted": inserted,
+        },
+    )
+    return inserted
+
+
 async def _rebuild_bucketed(
     pool: asyncpg.Pool[Any], *, scope: str, bucket_sql: str
 ) -> int:

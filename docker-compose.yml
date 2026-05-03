@@ -7,7 +7,7 @@ x-logging: &default-logging
 services:
   phish-game:
     build: .
-    image: phish-game:0.1.0
+    image: phish-game:0.2.0
     container_name: phish-game
     restart: unless-stopped
     read_only: true
@@ -46,7 +46,7 @@ services:
     # ticks. Restart policy + healthcheck restart it on transient failures
     # without scheduling burden on the host.
     build: .
-    image: phish-game:0.1.0
+    image: phish-game:0.2.0
     container_name: phish-game-resolver
     restart: unless-stopped
     read_only: true

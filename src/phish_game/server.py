@@ -58,6 +58,24 @@ from phish_game.leaderboard import (
     list_scope_keys,
     normalize_scope,
 )
+from phish_game.leagues import (
+    LeagueDateWindowError,
+    LeagueForbidden,
+    LeagueFull,
+    LeagueHostCannotLeave,
+    LeagueNameError,
+    create_league,
+    get_league_by_slug,
+    is_member,
+    join_league,
+    leave_league,
+    list_league_members,
+    list_user_leagues,
+    member_count,
+    rotate_slug,
+    soft_delete_league,
+    update_league,
+)
 from phish_game.locks import (
     LockState,
     assist_allowed,
@@ -349,6 +367,7 @@ def build_app(
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
+        memberships = await list_user_leagues(pool, user.id)
         return _render(
             request,
             "predicted.html",
@@ -358,6 +377,7 @@ def build_app(
             opener_slug=opener,
             closer_slug=closer,
             encore_slug=encore,
+            leagues=memberships,
         )
 
     async def _re_render_predict(
@@ -674,6 +694,428 @@ def build_app(
             show_meta=show_meta,
         )
 
+    # ----- Phase 4c: private leagues ----------------------------------------
+
+    def _parse_optional_date(raw: str) -> date | None:
+        s = (raw or "").strip()
+        if not s:
+            return None
+        try:
+            return date.fromisoformat(s)
+        except ValueError as exc:
+            raise LeagueDateWindowError(
+                f"'{s}' is not a valid date (YYYY-MM-DD)."
+            ) from exc
+
+    def _invite_url(request: Request, slug: str) -> str:
+        base = str(request.base_url).rstrip("/")
+        return f"{base}/league/{slug}"
+
+    @app.get("/leagues", response_class=HTMLResponse)
+    async def leagues_index(request: Request) -> Response:
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        pool = get_pool()
+        memberships = await list_user_leagues(pool, user.id)
+        return _render(
+            request,
+            "leagues_list.html",
+            current_user=user,
+            leagues=memberships,
+        )
+
+    @app.get("/leagues/new", response_class=HTMLResponse)
+    async def league_new_form(request: Request) -> Response:
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        return _render(
+            request,
+            "leagues_new.html",
+            current_user=user,
+            member_cap=cfg.league_member_cap,
+        )
+
+    @app.post("/leagues/new")
+    async def league_new_submit(
+        request: Request,
+        name: str = Form(...),
+        start_date: str = Form(""),
+        end_date: str = Form(""),
+    ) -> Response:
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        pool = get_pool()
+        try:
+            start = _parse_optional_date(start_date)
+            end = _parse_optional_date(end_date)
+            league = await create_league(
+                pool,
+                name=name,
+                host_user_id=user.id,
+                settings=cfg,
+                start_date=start,
+                end_date=end,
+            )
+        except (LeagueNameError, LeagueDateWindowError) as exc:
+            resp = _render(
+                request,
+                "leagues_new.html",
+                current_user=user,
+                member_cap=cfg.league_member_cap,
+                error=str(exc),
+                form_name=name,
+                form_start=start_date,
+                form_end=end_date,
+            )
+            resp.status_code = status.HTTP_400_BAD_REQUEST
+            return resp
+        return RedirectResponse(
+            f"/league/{league.slug}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    def _league_404(request: Request, signed_in: bool) -> HTMLResponse:
+        resp = _render(
+            request,
+            "auth_verify_error.html",
+            current_user=None,
+            message="That league doesn't exist (or the slug rotated).",
+            ttl_hours=cfg.magic_link_ttl_hours,
+            signed_in=signed_in,
+        )
+        resp.status_code = status.HTTP_404_NOT_FOUND
+        return resp
+
+    @app.get("/league/{slug}", response_class=HTMLResponse)
+    async def league_detail(request: Request, slug: str) -> Response:
+        pool = get_pool()
+        league = await get_league_by_slug(pool, slug)
+        if league is None:
+            user = await _resolve_user(request)
+            return _league_404(request, signed_in=user is not None)
+        user = await _resolve_user(request)
+        count = await member_count(pool, league.id)
+        if user is None or not await is_member(pool, league.id, user.id):
+            return _render(
+                request,
+                "league_join.html",
+                current_user=user,
+                league=league,
+                member_count=count,
+                at_cap=count >= league.member_cap,
+            )
+        # Member: render the dashboard.
+        members = await list_league_members(pool, league.id, limit=200)
+        upcoming = None
+        try:
+            async with McpPhishClient(
+                cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
+            ) as mcp:
+                upcoming = await select_form_show(cfg, mcp)
+        except McpPhishError:
+            logger.warning("mcp-phish unreachable on league dashboard")
+        flash = request.cookies.get("phishgame_league_flash")
+        resp = _render(
+            request,
+            "league_dashboard.html",
+            current_user=user,
+            league=league,
+            member_count=count,
+            members=members,
+            is_host=(league.host_user_id == user.id),
+            upcoming_show=upcoming,
+            invite_url=_invite_url(request, league.slug),
+            flash=flash,
+        )
+        if flash:
+            resp.delete_cookie("phishgame_league_flash")
+        return resp
+
+    @app.post("/league/{slug}/join")
+    async def league_join(request: Request, slug: str) -> Response:
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse(
+                f"/league/{slug}", status_code=status.HTTP_303_SEE_OTHER
+            )
+        pool = get_pool()
+        league = await get_league_by_slug(pool, slug)
+        if league is None:
+            return RedirectResponse(
+                "/leagues", status_code=status.HTTP_303_SEE_OTHER
+            )
+        try:
+            await join_league(pool, league, user.id)
+        except LeagueFull as exc:
+            count = await member_count(pool, league.id)
+            full_resp = _render(
+                request,
+                "league_join.html",
+                current_user=user,
+                league=league,
+                member_count=count,
+                at_cap=True,
+                error=str(exc),
+            )
+            full_resp.status_code = status.HTTP_409_CONFLICT
+            return full_resp
+        redirect: Response = RedirectResponse(
+            f"/league/{league.slug}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+        redirect.set_cookie(
+            "phishgame_league_flash",
+            f"You joined {league.name}.",
+            max_age=30,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+        )
+        return redirect
+
+    @app.post("/league/{slug}/leave")
+    async def league_leave(request: Request, slug: str) -> Response:
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        pool = get_pool()
+        league = await get_league_by_slug(pool, slug)
+        if league is None:
+            return RedirectResponse(
+                "/leagues", status_code=status.HTTP_303_SEE_OTHER
+            )
+        try:
+            await leave_league(pool, league, user.id)
+        except LeagueHostCannotLeave as exc:
+            members = await list_league_members(pool, league.id, limit=200)
+            count = await member_count(pool, league.id)
+            resp = _render(
+                request,
+                "league_dashboard.html",
+                current_user=user,
+                league=league,
+                member_count=count,
+                members=members,
+                is_host=True,
+                upcoming_show=None,
+                invite_url=_invite_url(request, league.slug),
+                flash=str(exc),
+            )
+            resp.status_code = status.HTTP_409_CONFLICT
+            return resp
+        return RedirectResponse(
+            "/leagues", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    @app.get("/league/{slug}/leaderboard", response_class=HTMLResponse)
+    async def league_leaderboard_view(
+        request: Request, slug: str
+    ) -> Response:
+        pool = get_pool()
+        league = await get_league_by_slug(pool, slug)
+        if league is None:
+            user = await _resolve_user(request)
+            return _league_404(request, signed_in=user is not None)
+        user = await _resolve_user(request)
+        count = await member_count(pool, league.id)
+        rows = await fetch_leaderboard(
+            pool, scope="league", scope_key=league.slug, limit=50
+        )
+        user_row = None
+        if user is not None:
+            user_row = await fetch_user_rank(
+                pool, scope="league", scope_key=league.slug, user_id=user.id
+            )
+        return _render(
+            request,
+            "league_leaderboard.html",
+            current_user=user,
+            league=league,
+            member_count=count,
+            rows=rows,
+            user_row=user_row,
+        )
+
+    async def _require_host(
+        request: Request, slug: str
+    ) -> tuple[Any, Any] | Response:
+        """Resolve user + league + enforce host-only. Returns the pair on success
+        or a Response on failure (use ``isinstance(..., Response)``).
+        """
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        pool = get_pool()
+        league = await get_league_by_slug(pool, slug)
+        if league is None:
+            return _league_404(request, signed_in=True)
+        if league.host_user_id != user.id:
+            resp = _render(
+                request,
+                "auth_verify_error.html",
+                current_user=user,
+                message="Only the league host can do that.",
+                ttl_hours=cfg.magic_link_ttl_hours,
+                signed_in=True,
+            )
+            resp.status_code = status.HTTP_403_FORBIDDEN
+            return resp
+        return (user, league)
+
+    @app.get("/league/{slug}/settings", response_class=HTMLResponse)
+    async def league_settings_view(
+        request: Request, slug: str
+    ) -> Response:
+        result = await _require_host(request, slug)
+        if isinstance(result, Response):
+            return result
+        user, league = result
+        flash = request.cookies.get("phishgame_league_flash")
+        resp = _render(
+            request,
+            "league_settings.html",
+            current_user=user,
+            league=league,
+            flash=flash,
+        )
+        if flash:
+            resp.delete_cookie("phishgame_league_flash")
+        return resp
+
+    @app.post("/league/{slug}/settings")
+    async def league_settings_submit(
+        request: Request,
+        slug: str,
+        name: str = Form(...),
+        start_date: str = Form(""),
+        end_date: str = Form(""),
+    ) -> Response:
+        result = await _require_host(request, slug)
+        if isinstance(result, Response):
+            return result
+        user, league = result
+        pool = get_pool()
+        try:
+            start = _parse_optional_date(start_date)
+            end = _parse_optional_date(end_date)
+            await update_league(
+                pool,
+                league,
+                host_user_id=user.id,
+                name=name,
+                start_date=start,
+                end_date=end,
+            )
+        except (
+            LeagueNameError,
+            LeagueDateWindowError,
+            LeagueForbidden,
+        ) as exc:
+            err_resp = _render(
+                request,
+                "league_settings.html",
+                current_user=user,
+                league=league,
+                error=str(exc),
+            )
+            err_resp.status_code = status.HTTP_400_BAD_REQUEST
+            return err_resp
+        redirect: Response = RedirectResponse(
+            f"/league/{league.slug}/settings",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+        redirect.set_cookie(
+            "phishgame_league_flash",
+            "League updated.",
+            max_age=30,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+        )
+        return redirect
+
+    @app.post("/league/{slug}/rotate")
+    async def league_rotate(request: Request, slug: str) -> Response:
+        result = await _require_host(request, slug)
+        if isinstance(result, Response):
+            return result
+        user, league = result
+        pool = get_pool()
+        try:
+            new_slug = await rotate_slug(pool, league, host_user_id=user.id)
+        except LeagueForbidden as exc:
+            err_resp = _render(
+                request,
+                "league_settings.html",
+                current_user=user,
+                league=league,
+                error=str(exc),
+            )
+            err_resp.status_code = status.HTTP_403_FORBIDDEN
+            return err_resp
+        # Migrate any existing leaderboard rows to the new scope_key so the
+        # leaderboard survives a rotate without a resolver tick. Same scope,
+        # new key.
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE leaderboard_snapshots
+                   SET scope_key = $2
+                 WHERE scope = 'league' AND scope_key = $1
+                """,
+                league.slug,
+                new_slug,
+            )
+        redirect: Response = RedirectResponse(
+            f"/league/{new_slug}/settings",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+        redirect.set_cookie(
+            "phishgame_league_flash",
+            f"Slug rotated. Old URL is dead. New URL: /league/{new_slug}",
+            max_age=30,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+        )
+        return redirect
+
+    @app.post("/league/{slug}/delete")
+    async def league_delete(request: Request, slug: str) -> Response:
+        result = await _require_host(request, slug)
+        if isinstance(result, Response):
+            return result
+        user, league = result
+        pool = get_pool()
+        try:
+            await soft_delete_league(pool, league, host_user_id=user.id)
+        except LeagueForbidden as exc:
+            resp = _render(
+                request,
+                "league_settings.html",
+                current_user=user,
+                league=league,
+                error=str(exc),
+            )
+            resp.status_code = status.HTTP_403_FORBIDDEN
+            return resp
+        # Wipe league leaderboard snapshots so the deleted slug doesn't
+        # leak rows into a future rebuild.
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                DELETE FROM leaderboard_snapshots
+                 WHERE scope = 'league' AND scope_key = $1
+                """,
+                league.slug,
+            )
+        return RedirectResponse(
+            "/leagues", status_code=status.HTTP_303_SEE_OTHER
+        )
+
     # ----- Phase 4b: magic-link email auth ----------------------------------
 
     def _provider_enabled() -> bool:
@@ -892,6 +1334,7 @@ def build_app(
             return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
         pool = get_pool()
         status_data = await get_email_status(pool, user.id)
+        memberships = await list_user_leagues(pool, user.id)
         flash = request.cookies.get("phishgame_flash")
         resp = _render(
             request,
@@ -899,6 +1342,7 @@ def build_app(
             current_user=user,
             status=status_data,
             flash=flash,
+            leagues=memberships,
         )
         if flash:
             resp.delete_cookie("phishgame_flash")

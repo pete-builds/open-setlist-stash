@@ -36,7 +36,7 @@ import asyncpg
 from phish_game import __version__
 from phish_game.config import Settings, get_settings
 from phish_game.db import close_pool, get_pool, init_pool
-from phish_game.leaderboard import rebuild_all
+from phish_game.leaderboard import rebuild_all, rebuild_leagues
 from phish_game.logging_setup import configure_logging
 from phish_game.mcp_client import (
     McpPhishClient,
@@ -534,6 +534,16 @@ async def run_tick(settings: Settings) -> TickResult:
             except Exception as exc:  # pragma: no cover - belt-and-suspenders
                 logger.exception("leaderboard rebuild failed; continuing tick")
                 summary["leaderboard_error"] = str(exc)[:200]
+            # Phase 4c: per-league leaderboards. Same log-and-continue stance —
+            # a busted league rebuild can't fail the resolver tick.
+            try:
+                league_counts = await rebuild_leagues(pool)
+                summary["league_leaderboards"] = league_counts
+            except Exception as exc:  # pragma: no cover - belt-and-suspenders
+                logger.exception(
+                    "league leaderboard rebuild failed; continuing tick"
+                )
+                summary["league_leaderboards_error"] = str(exc)[:200]
 
         await _finish_run(
             pool, run_id,

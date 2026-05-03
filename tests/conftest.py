@@ -58,11 +58,12 @@ async def pg_pool() -> AsyncIterator[asyncpg.Pool[Any] | None]:
     from phish_game.migrate import run_migrations
     await run_migrations(pool)
     # Truncate game tables before each test for a clean slate. We don't
-    # touch schema_version.
+    # touch schema_version. ``league_members`` is CASCADEd from leagues +
+    # users, but list it explicitly for clarity.
     async with pool.acquire() as conn:
         await conn.execute(
-            "TRUNCATE predictions, prediction_locks, users, "
-            "leaderboard_snapshots, scoring_runs RESTART IDENTITY CASCADE"
+            "TRUNCATE league_members, leagues, predictions, prediction_locks, "
+            "users, leaderboard_snapshots, scoring_runs RESTART IDENTITY CASCADE"
         )
     try:
         yield pool

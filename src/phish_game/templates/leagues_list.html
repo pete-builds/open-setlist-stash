@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Leagues — phish-game{% endblock %}
+{% block content %}
+  <h1>Your leagues</h1>
+
+  {% if not leagues %}
+    <div class="card">
+      <h2>No leagues yet</h2>
+      <p>
+        Private leagues let you compete with friends inside the larger
+        global game. One prediction per show, scored everywhere — your
+        picks count globally, in every league you join, and across the
+        weekly / season / all-time scopes.
+      </p>
+      <p class="muted">
+        Discovery is by URL share only. There is no public directory.
+        Send the league URL to friends to invite them.
+      </p>
+      <p>
+        <a class="btn" href="/leagues/new">Create a league</a>
+      </p>
+    </div>
+  {% else %}
+    <p>
+      <a class="btn" href="/leagues/new">Create a league</a>
+    </p>
+    {% for league in leagues %}
+      {% include "_league_card.html" %}
+    {% endfor %}
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,17 @@
+{# A single league summary tile. Used inside leagues_list.html and account.html. #}
+<div class="card league-card">
+  <div class="league-card-head">
+    <a class="league-name" href="/league/{{ league.slug }}">{{ league.name }}</a>
+    {% if league.role == 'host' %}
+      <span class="me-tag">host</span>
+    {% endif %}
+  </div>
+  <p class="muted">
+    <code>/league/{{ league.slug }}</code> &middot;
+    {{ league.member_count }} member{% if league.member_count != 1 %}s{% endif %}
+  </p>
+  <p>
+    <a class="btn" href="/league/{{ league.slug }}">Open</a>
+    <a class="btn" href="/league/{{ league.slug }}/leaderboard">Leaderboard</a>
+  </p>
+</div>

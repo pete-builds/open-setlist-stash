@@ -145,3 +145,31 @@ table.leaderboard tr.is-me {
 .topbar nav { margin-left: auto; }
 .topbar nav a { color: var(--muted); text-decoration: none; margin: 0 0.5rem; }
 .topbar nav a:hover { color: var(--accent); }
+
+/* ---- leagues ---- */
+.league-card-head {
+  display: flex; align-items: center; gap: 0.5rem;
+}
+.league-name {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+.league-name:hover { text-decoration: underline; }
+.member-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 1rem;
+}
+.member-list li {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.member-list li:last-child { border-bottom: none; }
+.member-list a { color: var(--ink); text-decoration: none; }
+.member-list a:hover { color: var(--accent); }
+.post-submit-leagues {
+  margin: 0.75rem 0;
+}
+.post-submit-leagues a { margin-right: 0.5rem; }

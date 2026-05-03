@@ -11,7 +11,16 @@
   </ul>
   <p class="muted">
     Score lands once the resolver picks up the published setlist.
-    Leaderboards (weekly / tour / all-time) ship in a later session.
+    Same picks count globally and in every league you've joined.
   </p>
-  <p><a class="btn" href="/">Home</a></p>
+
+  <p>Your pick is locked. See how it stacks up in:</p>
+  <p class="post-submit-leagues">
+    {% for league in leagues %}
+      <a class="btn" href="/league/{{ league.slug }}/leaderboard">{{ league.name }}</a>
+    {% endfor %}
+    <a class="btn" href="/leaderboard">global</a>
+  </p>
+
+  <p><a href="/">Home</a></p>
 {% endblock %}

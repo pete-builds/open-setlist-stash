@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     # MUST stay False during the prediction window. See PHASE-4-PLAN.md.
     assist_pre_lock: bool = Field(default=False)
 
+    # --- Private leagues (Phase 4c) ---
+    # Soft cap on members per league. Enforced at join time. Existing leagues
+    # keep their cap value (column ``leagues.member_cap``); this default is
+    # used when a new league is created without an explicit override.
+    league_member_cap: int = Field(default=500, ge=1, le=10000)
+
     # --- Predict form show selection ---
     # Operator override. When set, the predict form targets this show.
     # When unset, ``select_form_show`` walks ``recent_shows`` for the next

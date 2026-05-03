@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Join {{ league.name }} — phish-game{% endblock %}
+{% block content %}
+  <h1>{{ league.name }}</h1>
+  <p class="muted">
+    Private league &middot; {{ member_count }} member{% if member_count != 1 %}s{% endif %}
+    {% if league.start_date or league.end_date %}
+      &middot; Tour window:
+      {{ league.start_date or 'open' }} to {{ league.end_date or 'open' }}
+    {% endif %}
+  </p>
+
+  {% if at_cap %}
+    <div class="card error-card">
+      <h2>This league is full</h2>
+      <p>
+        Member cap reached ({{ league.member_cap }}). Ask the host to
+        remove an inactive member or rotate the slug after pruning.
+      </p>
+    </div>
+  {% elif current_user is none %}
+    <div class="card">
+      <h2>Sign in to join</h2>
+      <p>
+        Pick a handle to join <strong>{{ league.name }}</strong>.
+        Anonymous handles are fine — verified email is optional.
+      </p>
+      <form method="post" action="/handle">
+        <label for="handle">Handle</label>
+        <input type="text" id="handle" name="handle" required minlength="2"
+               maxlength="32" pattern="[A-Za-z0-9_-]{2,32}" autofocus>
+        <input type="hidden" name="next" value="/league/{{ league.slug }}">
+        <button type="submit" class="btn">Create handle &amp; continue</button>
+      </form>
+      <p class="muted">
+        Already have a handle attached to an email?
+        <a href="/auth/login">Sign in by email</a> first, then come back to this URL.
+      </p>
+    </div>
+  {% else %}
+    <div class="card">
+      <h2>Join this league</h2>
+      <p>
+        You're signed in as <strong>{{ current_user.handle }}</strong>.
+        Join to see the league leaderboard. You'll still be in the
+        global pool too — leagues just add a private leaderboard.
+      </p>
+      <form method="post" action="/league/{{ league.slug }}/join">
+        <button type="submit" class="btn">Join {{ league.name }}</button>
+      </form>
+    </div>
+  {% endif %}
+{% endblock %}

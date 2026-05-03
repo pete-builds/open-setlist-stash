@@ -28,6 +28,27 @@
     {% endif %}
   </div>
 
+  <h2>Your leagues</h2>
+  {% if leagues %}
+    {% for league in leagues %}
+      {% include "_league_card.html" %}
+    {% endfor %}
+    <p>
+      <a class="btn" href="/leagues/new">Create another league</a>
+    </p>
+  {% else %}
+    <div class="card">
+      <p>You haven't joined any leagues yet.</p>
+      <p>
+        <a class="btn" href="/leagues/new">Create a league</a>
+      </p>
+      <p class="muted">
+        Discovery is by URL share only. If a friend sent you a league
+        link, paste it into your browser and join from there.
+      </p>
+    </div>
+  {% endif %}
+
   <p class="muted">
     Phase 4b. Tailscale/LAN only. Magic links work only from a device on your
     tailnet.

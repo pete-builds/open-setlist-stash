@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "phish-game"
-version = "0.1.0"
+version = "0.2.0"
 description = "Setlist prediction game for Phish shows. Phase 4 of the Phish Data Platform."
 readme = "README.md"
 license = { file = "LICENSE" }
