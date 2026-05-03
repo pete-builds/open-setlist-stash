@@ -1,0 +1,34 @@
+<div id="leaderboard-table" class="leaderboard-wrap">
+  {% if not rows %}
+    <div class="card">
+      <h2>No scores yet</h2>
+      <p class="muted">
+        Predictions resolve after showtime. Check back once the resolver
+        scores the next show.
+      </p>
+    </div>
+  {% else %}
+    <table class="leaderboard">
+      <thead>
+        <tr>
+          <th class="num">Rank</th>
+          <th>Handle</th>
+          <th class="num">Score</th>
+          <th class="num">Shows</th>
+          <th>Refreshed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr {% if current_user and current_user.handle == row.handle %}class="is-me"{% endif %}>
+            <td class="num">#{{ row.rank }}</td>
+            <td>{{ row.handle }}{% if current_user and current_user.handle == row.handle %} <span class="me-tag">you</span>{% endif %}</td>
+            <td class="num">{{ row.total_score }}</td>
+            <td class="num">{{ row.shows_played }}</td>
+            <td class="muted">{{ row.refreshed_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>

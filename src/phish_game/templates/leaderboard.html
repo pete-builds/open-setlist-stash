@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard - {{ scope_label }}{% endblock %}
+{% block content %}
+  <h1>Leaderboard</h1>
+
+  <nav class="scope-tabs" role="tablist" aria-label="Leaderboard scope">
+    {% for value, label in scope_options %}
+      <a class="scope-tab {% if value == scope %}is-active{% endif %}"
+         href="/leaderboard?scope={{ value }}"
+         hx-get="/leaderboard?scope={{ value }}"
+         hx-target="#leaderboard-table"
+         hx-swap="outerHTML"
+         hx-push-url="/leaderboard?scope={{ value }}"
+         role="tab"
+         aria-selected="{{ 'true' if value == scope else 'false' }}">
+        {{ label }}
+      </a>
+    {% endfor %}
+  </nav>
+
+  {% if scope_keys and scope != 'all_time' %}
+    <p class="scope-key-list muted">
+      <span>Bucket: <strong>{{ scope_key or '-' }}</strong>.</span>
+      {% if scope_keys | length > 1 %}
+        <span>Past:</span>
+        {% for key in scope_keys[:8] %}
+          {% if key != scope_key %}
+            <a href="/leaderboard/{{ scope }}/{{ key }}">{{ key }}</a>{% if not loop.last %}, {% endif %}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+    </p>
+  {% endif %}
+
+  {% include "_leaderboard_table.html" %}
+
+  {% if user_row %}
+    <p class="muted">
+      Your rank in this {{ scope_label | lower }} bucket:
+      <strong>#{{ user_row.rank }}</strong>
+      ({{ user_row.total_score }} pts across {{ user_row.shows_played }} show{% if user_row.shows_played != 1 %}s{% endif %}).
+    </p>
+  {% endif %}
+
+  <p class="muted">
+    Leaderboards refresh after each resolver tick scores at least one show.
+    Tour-real bucketing lands when mcp-phish exposes tour mappings; until
+    then the "Season" tab uses meteorological seasons.
+  </p>
+{% endblock %}

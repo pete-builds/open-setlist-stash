@@ -13,9 +13,12 @@
     {% if current_user %}
       <span class="handle">handle: <strong>{{ current_user.handle }}</strong></span>
       <span class="claim-stub" title="Email-bound recovery lands in Phase 4b.">
-        (claim with email — coming Phase 4b)
+        (claim with email, coming Phase 4b)
       </span>
     {% endif %}
+    <nav>
+      <a href="/leaderboard">Leaderboard</a>
+    </nav>
   </header>
   <main class="content">
     {% block content %}{% endblock %}

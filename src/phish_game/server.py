@@ -41,6 +41,14 @@ from phish_game.auth import (
 )
 from phish_game.config import Settings, get_settings
 from phish_game.db import close_pool, get_pool, init_pool
+from phish_game.leaderboard import (
+    VALID_SCOPES,
+    fetch_leaderboard,
+    fetch_user_rank,
+    latest_scope_key,
+    list_scope_keys,
+    normalize_scope,
+)
 from phish_game.locks import LockState, get_or_create_lock, select_form_show
 from phish_game.logging_setup import configure_logging
 from phish_game.mcp_client import McpPhishClient, McpPhishError
@@ -386,6 +394,80 @@ def build_app(settings: Settings | None = None) -> FastAPI:
             f'<option value="{r["slug"]}">{r["title"]}</option>' for r in rows
         )
         return HTMLResponse(opts)
+
+    # ----- leaderboard ------------------------------------------------------
+
+    SCOPE_LABELS = {
+        "weekly": "Weekly",
+        "tour": "Season",
+        "all_time": "All-time",
+    }
+
+    async def _render_leaderboard(
+        request: Request,
+        *,
+        scope: str,
+        scope_key: str | None,
+        partial: bool,
+    ) -> HTMLResponse:
+        """Shared rendering for full-page and HTMX-fragment leaderboard views."""
+        pool = get_pool()
+        # Resolve effective scope_key: explicit > latest > None (empty state).
+        effective_key = scope_key or await latest_scope_key(pool, scope)
+        rows: list[Any] = []
+        user_row = None
+        user = await _resolve_user(request)
+        if effective_key:
+            rows = await fetch_leaderboard(pool, scope, effective_key, limit=50)
+            if user is not None:
+                user_row = await fetch_user_rank(
+                    pool, scope, effective_key, user.id
+                )
+        scope_keys = await list_scope_keys(pool, scope)
+        ctx: dict[str, Any] = {
+            "current_user": user,
+            "scope": scope,
+            "scope_label": SCOPE_LABELS.get(scope, scope),
+            "scope_key": effective_key,
+            "scope_keys": scope_keys,
+            "rows": rows,
+            "user_row": user_row,
+            "scope_options": [
+                ("weekly", "Weekly"),
+                ("tour", "Season"),
+                ("all_time", "All-time"),
+            ],
+        }
+        template = "_leaderboard_table.html" if partial else "leaderboard.html"
+        return _render(request, template, **ctx)
+
+    @app.get("/leaderboard", response_class=HTMLResponse)
+    async def leaderboard_index(
+        request: Request,
+        scope: str = Query("weekly"),
+    ) -> HTMLResponse:
+        normalized = normalize_scope(scope)
+        if normalized not in VALID_SCOPES:
+            normalized = "weekly"
+        partial = request.headers.get("HX-Request", "").lower() == "true"
+        return await _render_leaderboard(
+            request, scope=normalized, scope_key=None, partial=partial
+        )
+
+    @app.get("/leaderboard/{scope}/{scope_key}", response_class=HTMLResponse)
+    async def leaderboard_at(
+        request: Request, scope: str, scope_key: str
+    ) -> HTMLResponse:
+        normalized = normalize_scope(scope)
+        if normalized not in VALID_SCOPES:
+            normalized = "weekly"
+        partial = request.headers.get("HX-Request", "").lower() == "true"
+        # scope_key is user-provided; whitelist to alphanumeric + dash + underscore
+        # to keep it impossible to inject something weird into the page.
+        safe_key = "".join(c for c in scope_key if c.isalnum() or c in "-_")
+        return await _render_leaderboard(
+            request, scope=normalized, scope_key=safe_key or None, partial=partial
+        )
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:

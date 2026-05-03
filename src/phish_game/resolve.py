@@ -36,6 +36,7 @@ import asyncpg
 from phish_game import __version__
 from phish_game.config import Settings, get_settings
 from phish_game.db import close_pool, get_pool, init_pool
+from phish_game.leaderboard import rebuild_all
 from phish_game.logging_setup import configure_logging
 from phish_game.mcp_client import (
     McpPhishClient,
@@ -521,6 +522,18 @@ async def run_tick(settings: Settings) -> TickResult:
             status = "partial" if shows_resolved > 0 else "error"
         else:
             status = "success" if shows_resolved > 0 else "noop"
+
+        # Refresh leaderboard snapshots when at least one show resolved this
+        # tick. Errors here log + continue so the resolver tick stays green
+        # even if a leaderboard rebuild has trouble — the next tick will
+        # retry. We capture counts into the summary for observability.
+        if shows_resolved > 0:
+            try:
+                rebuild_counts = await rebuild_all(pool)
+                summary["leaderboard"] = rebuild_counts
+            except Exception as exc:  # pragma: no cover - belt-and-suspenders
+                logger.exception("leaderboard rebuild failed; continuing tick")
+                summary["leaderboard_error"] = str(exc)[:200]
 
         await _finish_run(
             pool, run_id,
