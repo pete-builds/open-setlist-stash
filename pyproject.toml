@@ -21,14 +21,14 @@ classifiers = [
     "Topic :: Games/Entertainment",
 ]
 dependencies = [
-    "fastapi==0.121.0",
-    "uvicorn[standard]==0.38.0",
+    "fastapi==0.136.1",
+    "uvicorn[standard]==0.46.0",
     "jinja2==3.1.6",
     "httpx==0.28.1",
     "asyncpg==0.31.0",
     "pydantic==2.13.3",
     "pydantic-settings==2.14.0",
-    "python-multipart==0.0.22",
+    "python-multipart==0.0.27",
     "itsdangerous==2.2.0",
     "python-dotenv==1.2.2",
 ]
