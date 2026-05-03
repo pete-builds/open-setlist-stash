@@ -43,7 +43,16 @@ class Settings(BaseSettings):
     default_lock_tz: str = Field(default="America/New_York")
 
     # --- Auto-resolve cron ---
+    # Legacy (Phase 4 plan §5 Option A naming). Kept for backwards-compat
+    # with .env files that already set it.
     resolve_interval_minutes: int = Field(default=30, ge=1)
+    # Inside-container loop interval (PHASE-4-PLAN.md §5 Option B; used by
+    # the phish-game-resolver service).
+    resolver_interval_seconds: int = Field(default=1800, ge=60)
+    # Conservative cancelled-show window. A show whose lock_at is older than
+    # this and still has no setlist data gets stamped cancelled. Don't drop
+    # below 24h: phish.net's setlist publish can lag, especially overnight.
+    resolver_cancel_after_hours: int = Field(default=72, ge=24)
 
     # --- Session / handle ---
     session_secret: SecretStr = Field(default=SecretStr("dev-only-do-not-use-in-prod"))

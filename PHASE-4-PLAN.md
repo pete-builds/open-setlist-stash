@@ -158,7 +158,9 @@ real materialized view yet.
 
 Inputs from `mcp__phish__get_song(slug)`:
 - `times_played` — historical performance count.
-- `gap_current` — shows since last play.
+- `gap_current` — shows since last play. Note: upstream MCP returns this
+  field as `gap`. Normalized to `gap_current` inside
+  `mcp_client.get_song()` so the rest of the codebase speaks one name.
 
 ### Per-pick base score (rarity points)
 
@@ -415,6 +417,14 @@ calls the mcp-phish HTTP endpoint over JSON-RPC.
   `Accept: application/json, text/event-stream`. The Streamable HTTP
   spec allows both request/response and SSE; we use synchronous
   request/response only.
+- **Session handshake required.** FastMCP Streamable HTTP refuses
+  `tools/call` without a session. Sequence per process:
+  1. POST `initialize` to `/mcp`. Capture the `mcp-session-id` response
+     header.
+  2. POST `notifications/initialized` to `/mcp` with that header.
+  3. Carry `mcp-session-id` on every subsequent `tools/call`.
+  Skip this and the server returns `400 Missing session ID` (caught by
+  build session 1's post-deploy smoke test).
 
 ### Wrapper shape
 

@@ -410,6 +410,20 @@ def build_app(settings: Settings | None = None) -> FastAPI:
         except Exception as exc:
             body["mcp_phish"] = {"reachable": False, "error": str(exc)[:120]}
             body["status"] = "degraded"
+        # Resolver heartbeat (most-recent scoring_runs row).
+        try:
+            from phish_game.resolve import latest_run_summary
+            pool = get_pool()
+            latest = await latest_run_summary(pool)
+            if latest is None:
+                body["resolver_last_run"] = None
+                body["resolver_last_status"] = None
+            else:
+                body["resolver_last_run"] = latest["finished_at"] or latest["started_at"]
+                body["resolver_last_status"] = latest["status"]
+        except Exception as exc:
+            body["resolver_last_run"] = None
+            body["resolver_last_status"] = f"error: {str(exc)[:80]}"
         return JSONResponse(body, status_code=200)
 
     logger.info(

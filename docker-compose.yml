@@ -40,6 +40,33 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  phish-game-resolver:
+    # Same image as phish-game; different command. Inside-container loop
+    # (PHASE-4-PLAN.md §5 Option B). Sleeps RESOLVER_INTERVAL_SECONDS between
+    # ticks. Restart policy + healthcheck restart it on transient failures
+    # without scheduling burden on the host.
+    build: .
+    image: phish-game:0.1.0
+    container_name: phish-game-resolver
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M
+    env_file:
+      - .env
+    environment:
+      TZ: "${TZ:-UTC}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - default
+      - mcp-phish
+    entrypoint: ["python", "-m", "phish_game.resolve", "--loop"]
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+
   postgres:
     image: postgres:16-alpine
     container_name: phish-game-pg
