@@ -1,5 +1,7 @@
 # phish-game
 
+[![CI](https://github.com/pete-builds/phish-game/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/phish-game/actions/workflows/ci.yml)
+
 Setlist prediction game for Phish shows. Phase 4 of the Phish Data Platform.
 
 ## What it is
