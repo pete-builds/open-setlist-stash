@@ -23,7 +23,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
-import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
