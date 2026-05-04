@@ -133,6 +133,7 @@ def build_app(
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.globals["site_name"] = cfg.site_name
+    templates.env.globals["theme_file"] = cfg.theme_file
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

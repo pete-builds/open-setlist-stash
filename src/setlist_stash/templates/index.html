@@ -3,9 +3,11 @@
 {% block content %}
   <h1>{{ site_name }}</h1>
   <p class="muted" style="margin-top:0.4rem;">
-    <span class="stamp stamp-teal">Lot Only</span>
-    <span class="sticker">v{{ version }} BETA</span>
-    <span class="donut" aria-hidden="true"></span>
+    {% if theme_file and "lot-poster" in theme_file %}
+      <span class="stamp stamp-teal">Lot Only</span>
+      <span class="sticker">v{{ version }} BETA</span>
+      <span class="donut" aria-hidden="true"></span>
+    {% endif %}
     setlist picks &middot; weekly leaderboard &middot; private leagues
   </p>
   {% if current_user %}

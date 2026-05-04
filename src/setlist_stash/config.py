@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     # --- Branding (deployment-level override) ---
     site_name: str = Field(default="Open Setlist Stash")
+    # Path under /static/ to an additional CSS file loaded after style.css.
+    # Empty disables; e.g. "themes/lot-poster.css" loads the bundled Lot Poster look.
+    theme_file: str = Field(default="")
 
     # --- HTTP server ---
     app_host: str = Field(default="0.0.0.0")

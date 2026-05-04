@@ -12,7 +12,17 @@ Every page title, the brand wordmark, and the marketing copy read from the `SITE
 SITE_NAME=Your Site Name
 ```
 
-The Lot Poster theme (Honk + Anton + Special Elite, hoodie-patch palette) is the default look. Override `src/setlist_stash/static/style.css` if you want a different aesthetic.
+### Themes
+
+The platform ships with a clean minimal default theme (`static/style.css`). To layer on a custom look, drop a CSS file into `static/` and point `THEME_FILE` at it:
+
+```
+THEME_FILE=themes/your-theme.css
+```
+
+The repo bundles one alternate theme out of the box: `themes/lot-poster.css` (Phish-fan hoodie-patch aesthetic, Honk + Anton + Special Elite typography, halftone overlays, silkscreen offsets). It's the look used on the reference deployment, [Tweezer Picks](http://192.168.86.20:3706). Set `THEME_FILE=themes/lot-poster.css` to use it.
+
+To fully reskin, write your own CSS file and override the class hooks documented in `static/style.css`.
 
 ## What it is
 
