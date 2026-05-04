@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Check your inbox — Tweezer Picks{% endblock %}
+{% block title %}Check your inbox — {{ site_name }}{% endblock %}
 {% block content %}
   <h1>Check your inbox</h1>
   <div class="card">
@@ -19,7 +19,7 @@
         <strong>Dev note:</strong> EMAIL_PROVIDER is set to <code>log</code>.
         The full message (including the magic link) was written to the
         container log instead of being sent. Run
-        <code>docker logs tweezer-picks | grep "EMAIL body"</code> on the host
+        <code>docker logs setlist-stash | grep "EMAIL body"</code> on the host
         to retrieve it.
       </p>
     </div>

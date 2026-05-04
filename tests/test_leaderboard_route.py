@@ -21,7 +21,7 @@ from typing import Any
 import asyncpg
 from httpx import AsyncClient
 
-from tweezer_picks.leaderboard import rebuild_all
+from setlist_stash.leaderboard import rebuild_all
 from tests.conftest import requires_pg
 
 

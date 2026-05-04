@@ -27,9 +27,9 @@ import logging
 from email.message import EmailMessage
 from typing import Protocol
 
-from tweezer_picks.config import Settings
+from setlist_stash.config import Settings
 
-logger = logging.getLogger("tweezer_picks.email")
+logger = logging.getLogger("setlist_stash.email")
 
 
 class EmailSendError(RuntimeError):
@@ -78,7 +78,7 @@ class LogProvider:
 
     Useful for dev and for the nix1-without-app-password mode. The full
     body is written at INFO so the magic link is grep-able from
-    ``docker logs tweezer-picks``.
+    ``docker logs setlist-stash``.
 
     Caveat: do NOT use in production. Anyone with log access can complete
     a verification flow. Documented in the env var help text.

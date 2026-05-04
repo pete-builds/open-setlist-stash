@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from tweezer_picks.config import Settings
-from tweezer_picks.leagues import (
+from setlist_stash.config import Settings
+from setlist_stash.leagues import (
     SLUG_WORDLIST,
     LeagueDateWindowError,
     LeagueForbidden,

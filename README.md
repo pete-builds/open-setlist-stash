@@ -1,8 +1,18 @@
-# tweezer-picks
+# open-setlist-stash
 
-[![CI](https://github.com/pete-builds/tweezer-picks/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/tweezer-picks/actions/workflows/ci.yml)
+[![CI](https://github.com/pete-builds/open-setlist-stash/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/open-setlist-stash/actions/workflows/ci.yml)
 
-Setlist prediction game for Phish shows. Phase 4 of the Phish Data Platform.
+Open-source setlist prediction game for Phish shows. The reference deployment is [Tweezer Picks](https://github.com/pete-builds/open-setlist-stash); fork it and brand your own instance via the `SITE_NAME` env var.
+
+## Branding your instance
+
+Every page title, the brand wordmark, and the marketing copy read from the `SITE_NAME` environment variable. Set it in your `.env`:
+
+```
+SITE_NAME=Your Site Name
+```
+
+The Lot Poster theme (Honk + Anton + Special Elite, hoodie-patch palette) is the default look. Override `src/setlist_stash/static/style.css` if you want a different aesthetic.
 
 ## What it is
 
@@ -27,7 +37,7 @@ prediction window. Gap stats and venue history unlock after lock.
 The game never touches the phish-vault Postgres directly. Every vault read
 goes through the [mcp-phish](https://github.com/pete-builds/mcp-phish) HTTP
 endpoint at `http://mcp-phish:3705/mcp` (MCP Streamable HTTP, JSON-RPC).
-A small async wrapper in `src/tweezer_picks/mcp_client.py` calls the 14 tools
+A small async wrapper in `src/setlist_stash/mcp_client.py` calls the 14 tools
 exposed by mcp-phish.
 
 ## Phase 4 plan

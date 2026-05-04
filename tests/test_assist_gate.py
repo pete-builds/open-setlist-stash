@@ -17,8 +17,8 @@ from typing import Any
 
 import asyncpg
 
-from tweezer_picks.config import get_settings
-from tweezer_picks.locks import assist_allowed
+from setlist_stash.config import get_settings
+from setlist_stash.locks import assist_allowed
 from tests.conftest import requires_pg
 
 

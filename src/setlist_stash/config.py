@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """tweezer-picks runtime settings."""
+    """setlist-stash runtime settings."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -21,6 +21,9 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    # --- Branding (deployment-level override) ---
+    site_name: str = Field(default="Open Setlist Stash")
 
     # --- HTTP server ---
     app_host: str = Field(default="0.0.0.0")
@@ -30,8 +33,8 @@ class Settings(BaseSettings):
     # --- Postgres (game state only) ---
     pg_host: str = Field(default="postgres")
     pg_port: int = Field(default=5432, ge=1, le=65535)
-    pg_db: str = Field(default="tweezer_picks")
-    pg_user: str = Field(default="tweezer_picks")
+    pg_db: str = Field(default="setlist_stash")
+    pg_user: str = Field(default="setlist_stash")
     pg_password: SecretStr = Field(default=SecretStr("changeme"))
 
     # --- mcp-phish read path ---
@@ -47,7 +50,7 @@ class Settings(BaseSettings):
     # with .env files that already set it.
     resolve_interval_minutes: int = Field(default=30, ge=1)
     # Inside-container loop interval (PHASE-4-PLAN.md §5 Option B; used by
-    # the tweezer-picks-resolver service).
+    # the setlist-stash-resolver service).
     resolver_interval_seconds: int = Field(default=1800, ge=60)
     # Conservative cancelled-show window. A show whose lock_at is older than
     # this and still has no setlist data gets stamped cancelled. Don't drop

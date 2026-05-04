@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from tweezer_picks import __version__
-from tweezer_picks.server import build_app
+from setlist_stash import __version__
+from setlist_stash.server import build_app
 
 
 def test_healthz_returns_ok_with_dep_summary() -> None:

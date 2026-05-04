@@ -28,8 +28,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from tweezer_picks import __version__
-from tweezer_picks.auth import (
+from setlist_stash import __version__
+from setlist_stash.auth import (
     COOKIE_MAX_AGE_SECONDS,
     COOKIE_NAME,
     HANDLE_HELP,
@@ -39,7 +39,7 @@ from tweezer_picks.auth import (
     sign_user_id,
     validate_handle,
 )
-from tweezer_picks.auth_email import (
+from setlist_stash.auth_email import (
     EmailFormatError,
     EmailTakenError,
     get_email_status,
@@ -47,10 +47,10 @@ from tweezer_picks.auth_email import (
     request_login_link,
     verify_token,
 )
-from tweezer_picks.config import Settings, get_settings
-from tweezer_picks.db import close_pool, get_pool, init_pool
-from tweezer_picks.email import EmailProvider, EmailSendError, build_provider
-from tweezer_picks.leaderboard import (
+from setlist_stash.config import Settings, get_settings
+from setlist_stash.db import close_pool, get_pool, init_pool
+from setlist_stash.email import EmailProvider, EmailSendError, build_provider
+from setlist_stash.leaderboard import (
     VALID_SCOPES,
     fetch_leaderboard,
     fetch_user_rank,
@@ -58,7 +58,7 @@ from tweezer_picks.leaderboard import (
     list_scope_keys,
     normalize_scope,
 )
-from tweezer_picks.leagues import (
+from setlist_stash.leagues import (
     LeagueDateWindowError,
     LeagueForbidden,
     LeagueFull,
@@ -76,17 +76,17 @@ from tweezer_picks.leagues import (
     soft_delete_league,
     update_league,
 )
-from tweezer_picks.locks import (
+from setlist_stash.locks import (
     LockState,
     assist_allowed,
     get_or_create_lock,
     read_lock,
     select_form_show,
 )
-from tweezer_picks.logging_setup import configure_logging
-from tweezer_picks.mcp_client import McpPhishClient, McpPhishError
-from tweezer_picks.migrate import run_migrations
-from tweezer_picks.predictions import (
+from setlist_stash.logging_setup import configure_logging
+from setlist_stash.mcp_client import McpPhishClient, McpPhishError
+from setlist_stash.migrate import run_migrations
+from setlist_stash.predictions import (
     PredictionDuplicate,
     PredictionError,
     PredictionLocked,
@@ -96,7 +96,7 @@ from tweezer_picks.predictions import (
     normalize_slot,
 )
 
-logger = logging.getLogger("tweezer_picks.server")
+logger = logging.getLogger("setlist_stash.server")
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
@@ -132,6 +132,7 @@ def build_app(
     provider: EmailProvider = email_provider or build_provider(cfg)
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    templates.env.globals["site_name"] = cfg.site_name
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -146,7 +147,7 @@ def build_app(
         await close_pool()
 
     app = FastAPI(
-        title="tweezer-picks",
+        title="setlist-stash",
         version=__version__,
         description=(
             "Setlist prediction game for Phish shows. "
@@ -275,7 +276,7 @@ def build_app(
             "tour_name": tour_name,
         }
 
-        from tweezer_picks.locks import ShowTarget  # local import to avoid cycle
+        from setlist_stash.locks import ShowTarget  # local import to avoid cycle
 
         target = ShowTarget(
             show_date=show_date,
@@ -335,7 +336,7 @@ def build_app(
                 request, user, show_date, error=str(exc), form_values=raw_form
             )
 
-        from tweezer_picks.locks import ShowTarget
+        from setlist_stash.locks import ShowTarget
 
         target = ShowTarget(
             show_date=show_date,
@@ -463,7 +464,7 @@ def build_app(
         bad_slugs: list[str] | None = None,
     ) -> Response:
         pool = get_pool()
-        from tweezer_picks.locks import ShowTarget
+        from setlist_stash.locks import ShowTarget
 
         target = ShowTarget(
             show_date=show_date, show_id=None, venue_name=None,
@@ -1449,7 +1450,7 @@ def build_app(
             body["status"] = "degraded"
         # Resolver heartbeat (most-recent scoring_runs row).
         try:
-            from tweezer_picks.resolve import latest_run_summary
+            from setlist_stash.resolve import latest_run_summary
             pool = get_pool()
             latest = await latest_run_summary(pool)
             if latest is None:
@@ -1464,13 +1465,13 @@ def build_app(
         return JSONResponse(body, status_code=200)
 
     logger.info(
-        "tweezer-picks booted",
+        "setlist-stash booted",
         extra={"version": __version__, "port": cfg.app_port},
     )
     return app
 
 
-# Module-level app for ``uvicorn tweezer_picks.server:app`` usage.
+# Module-level app for ``uvicorn setlist_stash.server:app`` usage.
 app = build_app()
 
 
@@ -1478,7 +1479,7 @@ def main() -> None:
     """Run the app under uvicorn. Used by the Docker entrypoint."""
     cfg = get_settings()
     uvicorn.run(
-        "tweezer_picks.server:app",
+        "setlist_stash.server:app",
         host=cfg.app_host,
         port=cfg.app_port,
         log_config=None,

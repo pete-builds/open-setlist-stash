@@ -9,7 +9,7 @@ import math
 
 import pytest
 
-from tweezer_picks.scoring import (
+from setlist_stash.scoring import (
     CLOSER_BONUS,
     ENCORE_BONUS,
     OPENER_BONUS,

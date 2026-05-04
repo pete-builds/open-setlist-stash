@@ -12,9 +12,9 @@ from typing import Any
 
 import asyncpg
 
-from tweezer_picks.config import Settings
+from setlist_stash.config import Settings
 
-logger = logging.getLogger("tweezer_picks.db")
+logger = logging.getLogger("setlist_stash.db")
 
 _pool: asyncpg.Pool[Any] | None = None
 
@@ -32,7 +32,7 @@ async def init_pool(settings: Settings) -> asyncpg.Pool[Any]:
     )
     if _pool is None:  # asyncpg type hint says Optional
         raise RuntimeError("asyncpg.create_pool returned None")
-    logger.info("tweezer-picks db pool ready", extra={"db": settings.pg_db})
+    logger.info("setlist-stash db pool ready", extra={"db": settings.pg_db})
     return _pool
 
 
@@ -42,7 +42,7 @@ async def close_pool() -> None:
     if _pool is not None:
         await _pool.close()
         _pool = None
-        logger.info("tweezer-picks db pool closed")
+        logger.info("setlist-stash db pool closed")
 
 
 def get_pool() -> asyncpg.Pool[Any]:

@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from tweezer_picks.leaderboard import (
+from setlist_stash.leaderboard import (
     derive_season_key,
     fetch_leaderboard,
     fetch_user_rank,
@@ -404,13 +404,13 @@ class _FakeMcpForLeaderboard:
         return None
 
     async def get_show(self, date_or_id: str) -> dict[str, Any]:
-        from tweezer_picks.mcp_client import McpPhishNotFound
+        from setlist_stash.mcp_client import McpPhishNotFound
         if date_or_id not in self.shows:
             raise McpPhishNotFound(date_or_id)
         return self.shows[date_or_id]
 
     async def get_song(self, slug: str) -> dict[str, Any]:
-        from tweezer_picks.mcp_client import McpPhishNotFound
+        from setlist_stash.mcp_client import McpPhishNotFound
         if slug not in self.songs:
             raise McpPhishNotFound(slug)
         return self.songs[slug]
@@ -422,8 +422,8 @@ async def test_resolver_tick_rebuilds_leaderboard(
     pg_pool: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A resolver tick that resolves >=1 show should leave leaderboard rows behind."""
-    from tweezer_picks import db, resolve
-    from tweezer_picks.config import Settings
+    from setlist_stash import db, resolve
+    from setlist_stash.config import Settings
 
     monkeypatch.setattr(db, "_pool", pg_pool)
 

@@ -14,8 +14,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import SecretStr
 
-from tweezer_picks.config import Settings
-from tweezer_picks.email import (
+from setlist_stash.config import Settings
+from setlist_stash.email import (
     DisabledProvider,
     EmailSendError,
     LogProvider,
@@ -39,7 +39,7 @@ async def test_log_provider_writes_message_to_logger(
     p = LogProvider()
     assert p.name == "log"
     body = "Click here: http://example.com/auth/verify?token=abc\nthanks"
-    with caplog.at_level(logging.INFO, logger="tweezer_picks.email"):
+    with caplog.at_level(logging.INFO, logger="setlist_stash.email"):
         await p.send(to="user@example.com", subject="Hello", body=body)
     # Subject + recipient on the preamble line.
     preamble = [r for r in caplog.records if "EMAIL (log provider)" in r.getMessage()]

@@ -17,12 +17,12 @@ from typing import Any
 
 import pytest
 
-from tweezer_picks.config import Settings
-from tweezer_picks.leaderboard import (
+from setlist_stash.config import Settings
+from setlist_stash.leaderboard import (
     fetch_leaderboard,
     rebuild_leagues,
 )
-from tweezer_picks.leagues import (
+from setlist_stash.leagues import (
     create_league,
     join_league,
     soft_delete_league,

@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Check your inbox — Tweezer Picks{% endblock %}
+{% block title %}Check your inbox — {{ site_name }}{% endblock %}
 {% block content %}
   <h1>Check your inbox</h1>
   <div class="card">
     <p>
-      If <strong>{{ masked_email }}</strong> matches a verified Tweezer Picks
+      If <strong>{{ masked_email }}</strong> matches a verified {{ site_name }}
       account, we just emailed a one-time sign-in link.
     </p>
     <p>

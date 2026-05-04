@@ -6,7 +6,7 @@ Pure function -> opener / closer / encore extraction from the mcp-phish
 
 from __future__ import annotations
 
-from tweezer_picks.resolve import parse_setlist
+from setlist_stash.resolve import parse_setlist
 
 
 def _row(position: int, set_name: str, slug: str) -> dict:

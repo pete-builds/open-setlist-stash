@@ -22,9 +22,9 @@ import asyncpg
 from fastapi import Request
 from itsdangerous import BadSignature, URLSafeSerializer
 
-from tweezer_picks.config import Settings
+from setlist_stash.config import Settings
 
-logger = logging.getLogger("tweezer_picks.auth")
+logger = logging.getLogger("setlist_stash.auth")
 
 COOKIE_NAME = "phishgame_session"
 # 365 days; cookies are LAN/Tailscale only through Phase 5.
@@ -45,7 +45,7 @@ class CurrentUser:
 
 def _serializer(settings: Settings) -> URLSafeSerializer:
     return URLSafeSerializer(
-        settings.session_secret.get_secret_value(), salt="tweezer-picks-session"
+        settings.session_secret.get_secret_value(), salt="setlist-stash-session"
     )
 
 

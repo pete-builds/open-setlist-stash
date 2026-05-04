@@ -13,8 +13,8 @@ PHASE-4-PLAN.md §5 is the design source. Pete approval (build session 2):
   process doesn't poison subsequent ticks.
 
 Entrypoints:
-- ``python -m tweezer_picks.resolve``         - single tick, exit 0
-- ``python -m tweezer_picks.resolve --loop``  - run forever, sleep between ticks
+- ``python -m setlist_stash.resolve``         - single tick, exit 0
+- ``python -m setlist_stash.resolve --loop``  - run forever, sleep between ticks
 
 Both honor ``RESOLVER_INTERVAL_SECONDS`` (default 1800) and
 ``RESOLVER_CANCEL_AFTER_HOURS`` (default 72).
@@ -33,21 +33,21 @@ from typing import Any
 
 import asyncpg
 
-from tweezer_picks import __version__
-from tweezer_picks.config import Settings, get_settings
-from tweezer_picks.db import close_pool, get_pool, init_pool
-from tweezer_picks.leaderboard import rebuild_all, rebuild_leagues
-from tweezer_picks.logging_setup import configure_logging
-from tweezer_picks.mcp_client import (
+from setlist_stash import __version__
+from setlist_stash.config import Settings, get_settings
+from setlist_stash.db import close_pool, get_pool, init_pool
+from setlist_stash.leaderboard import rebuild_all, rebuild_leagues
+from setlist_stash.logging_setup import configure_logging
+from setlist_stash.mcp_client import (
     McpPhishClient,
     McpPhishError,
     McpPhishNotFound,
     McpPhishUnavailable,
 )
-from tweezer_picks.migrate import run_migrations
-from tweezer_picks.scoring import score_prediction
+from setlist_stash.migrate import run_migrations
+from setlist_stash.scoring import score_prediction
 
-logger = logging.getLogger("tweezer_picks.resolve")
+logger = logging.getLogger("setlist_stash.resolve")
 
 
 # ----- setlist parsing ------------------------------------------------------
@@ -648,10 +648,10 @@ async def _amain(loop: bool, interval_seconds: int) -> int:
 
 
 def main() -> None:
-    """CLI: ``tweezer-picks-resolve`` (one tick) or ``--loop`` (forever)."""
+    """CLI: ``setlist-stash-resolve`` (one tick) or ``--loop`` (forever)."""
     parser = argparse.ArgumentParser(
-        prog="tweezer-picks-resolve",
-        description="Resolve unresolved tweezer-picks predictions against published setlists.",
+        prog="setlist-stash-resolve",
+        description="Resolve unresolved setlist-stash predictions against published setlists.",
     )
     parser.add_argument(
         "--loop",

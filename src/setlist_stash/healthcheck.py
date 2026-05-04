@@ -10,7 +10,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from tweezer_picks.config import get_settings
+from setlist_stash.config import get_settings
 
 
 def main() -> int:

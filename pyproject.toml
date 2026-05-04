@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tweezer-picks"
+name = "open-setlist-stash"
 version = "0.2.0"
 description = "Setlist prediction game for Phish shows. Phase 4 of the Phish Data Platform."
 readme = "README.md"
@@ -45,20 +45,20 @@ dev = [
 ]
 
 [project.scripts]
-tweezer-picks = "tweezer_picks.server:main"
-tweezer-picks-resolve = "tweezer_picks.resolve:main"
-tweezer-picks-healthcheck = "tweezer_picks.healthcheck:main"
+setlist-stash = "setlist_stash.server:main"
+setlist-stash-resolve = "setlist_stash.resolve:main"
+setlist-stash-healthcheck = "setlist_stash.healthcheck:main"
 
 [project.urls]
-Homepage = "https://github.com/pete-builds/tweezer-picks"
-Repository = "https://github.com/pete-builds/tweezer-picks"
-Issues = "https://github.com/pete-builds/tweezer-picks/issues"
+Homepage = "https://github.com/pete-builds/open-setlist-stash"
+Repository = "https://github.com/pete-builds/open-setlist-stash"
+Issues = "https://github.com/pete-builds/open-setlist-stash/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-tweezer_picks = ["py.typed", "templates/*.html", "static/*"]
+setlist_stash = ["py.typed", "templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
@@ -66,7 +66,7 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=tweezer_picks",
+    "--cov=setlist_stash",
     "--cov-report=term-missing",
     "--cov-report=xml",
 ]
@@ -76,7 +76,7 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true
-source = ["tweezer_picks"]
+source = ["setlist_stash"]
 
 [tool.coverage.report]
 show_missing = true
@@ -126,7 +126,7 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 disallow_any_generics = true
 mypy_path = ["src"]
-files = ["src/tweezer_picks"]
+files = ["src/setlist_stash"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]

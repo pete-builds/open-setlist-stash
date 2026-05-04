@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Tweezer Picks{% endblock %}</title>
+  <title>{% block title %}{{ site_name }}{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Honk&family=Anton&family=Special+Elite&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
@@ -12,7 +12,7 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">Tweezer Picks</a>
+    <a class="brand" href="/">{{ site_name }}</a>
     {% if current_user %}
       <span class="handle">handle: <strong>{{ current_user.handle }}</strong></span>
     {% endif %}

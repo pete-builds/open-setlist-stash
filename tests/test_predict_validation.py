@@ -18,8 +18,8 @@ import pytest
 import respx
 from httpx import AsyncClient
 
-from tweezer_picks.auth import sign_user_id
-from tweezer_picks.config import get_settings
+from setlist_stash.auth import sign_user_id
+from setlist_stash.config import get_settings
 from tests.conftest import requires_pg
 
 MCP_URL = "http://mcp-phish:3705/mcp"

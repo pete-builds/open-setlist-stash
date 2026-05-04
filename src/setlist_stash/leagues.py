@@ -32,9 +32,9 @@ from typing import Any
 
 import asyncpg
 
-from tweezer_picks.config import Settings
+from setlist_stash.config import Settings
 
-logger = logging.getLogger("tweezer_picks.leagues")
+logger = logging.getLogger("setlist_stash.leagues")
 
 
 # ----- errors ---------------------------------------------------------------
