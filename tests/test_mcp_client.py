@@ -149,82 +149,65 @@ async def test_request_body_is_jsonrpc_tools_call() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_validate_song_slugs_returns_only_real_slugs() -> None:
-    """validate_song_slugs drops slugs that get_song reports as 404."""
-    # Order: tweezer ok, blarghhh -> 404, fluffhead ok.
-    responses = [
-        httpx.Response(
-            200,
-            headers={"content-type": "application/json"},
-            json=_mcp_response({"slug": "tweezer", "title": "Tweezer"}),
-        ),
-        httpx.Response(404, text="not found"),
-        httpx.Response(
-            200,
-            headers={"content-type": "application/json"},
-            json=_mcp_response({"slug": "fluffhead", "title": "Fluffhead"}),
-        ),
-    ]
-    route = respx.post(URL)
-    route.side_effect = responses
+async def test_validate_song_slugs_empty_input_no_round_trip() -> None:
+    """Empty list short-circuits to empty set with zero round-trips."""
+    route = respx.post(URL).respond(
+        json=_mcp_response({"valid": [], "unknown": []})
+    )
+    async with McpPhishClient(URL) as c:
+        _skip_handshake(c)
+        valid = await c.validate_song_slugs([])
+    assert valid == set()
+    assert not route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_validate_song_slugs_all_valid_returns_full_set() -> None:
+    """All slugs valid -> single round-trip, full set returned."""
+    route = respx.post(URL).respond(
+        json=_mcp_response(
+            {"valid": ["fluffhead", "tweezer"], "unknown": []}
+        )
+    )
+    async with McpPhishClient(URL) as c:
+        _skip_handshake(c)
+        valid = await c.validate_song_slugs(["tweezer", "fluffhead"])
+    assert valid == {"tweezer", "fluffhead"}
+    assert route.call_count == 1
+    sent = json.loads(route.calls[0].request.content.decode())
+    assert sent["params"]["name"] == "validate_song_slugs"
+    # Slugs are normalized (lower + strip + dedupe) before being sent.
+    assert set(sent["params"]["arguments"]["slugs"]) == {"tweezer", "fluffhead"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_validate_song_slugs_mixed_returns_only_valid_subset() -> None:
+    """Mixed valid/unknown -> only the valid subset comes back."""
+    route = respx.post(URL).respond(
+        json=_mcp_response(
+            {"valid": ["fluffhead", "tweezer"], "unknown": ["blarghhh"]}
+        )
+    )
     async with McpPhishClient(URL) as c:
         _skip_handshake(c)
         valid = await c.validate_song_slugs(
             ["tweezer", "blarghhh", "fluffhead"]
         )
     assert valid == {"tweezer", "fluffhead"}
+    assert route.call_count == 1
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_validate_song_slugs_normalizes_and_dedupes_input() -> None:
-    """Whitespace, case, blanks, and duplicates collapse to one call each."""
-    # Two unique slugs -> two calls.
-    responses = [
-        httpx.Response(
-            200,
-            headers={"content-type": "application/json"},
-            json=_mcp_response({"slug": "tweezer", "title": "Tweezer"}),
-        ),
-        httpx.Response(
-            200,
-            headers={"content-type": "application/json"},
-            json=_mcp_response({"slug": "fluffhead", "title": "Fluffhead"}),
-        ),
-    ]
-    route = respx.post(URL)
-    route.side_effect = responses
-    async with McpPhishClient(URL) as c:
-        _skip_handshake(c)
-        valid = await c.validate_song_slugs(
-            ["TWEEZER", "  tweezer ", "", None, "fluffhead"]  # type: ignore[list-item]
-        )
-    assert valid == {"tweezer", "fluffhead"}
-    assert route.call_count == 2
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_validate_song_slugs_rejects_when_returned_slug_mismatches() -> None:
-    """Defense-in-depth: if get_song returns a different slug, we don't trust it."""
-    respx.post(URL).respond(
-        json=_mcp_response({"slug": "different-song", "title": "Different"}),
-    )
-    async with McpPhishClient(URL) as c:
-        _skip_handshake(c)
-        valid = await c.validate_song_slugs(["tweezer"])
-    assert valid == set()
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_validate_song_slugs_empty_input_no_calls() -> None:
-    route = respx.post(URL).respond(json=_mcp_response({}))
-    async with McpPhishClient(URL) as c:
-        _skip_handshake(c)
-        valid = await c.validate_song_slugs([])
-    assert valid == set()
-    assert not route.called
+async def test_validate_song_slugs_upstream_error_raises() -> None:
+    """Upstream 5xx bubbles up as McpPhishError (subclass)."""
+    respx.post(URL).respond(status_code=503, text="upstream down")
+    with pytest.raises(McpPhishUnavailable):
+        async with McpPhishClient(URL) as c:
+            _skip_handshake(c)
+            await c.validate_song_slugs(["tweezer"])
 
 
 @pytest.mark.asyncio

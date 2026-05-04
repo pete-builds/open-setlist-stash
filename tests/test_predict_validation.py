@@ -66,16 +66,13 @@ def _handshake_responses() -> list[httpx.Response]:
     ]
 
 
-def _song_ok(slug: str) -> httpx.Response:
+def _validate_ok(valid: list[str], unknown: list[str] | None = None) -> httpx.Response:
+    """Single mcp-phish response for the batch validate_song_slugs tool."""
     return httpx.Response(
         200,
         headers={"content-type": "application/json"},
-        json=_mcp_response({"slug": slug, "title": slug.title()}),
+        json=_mcp_response({"valid": valid, "unknown": unknown or []}),
     )
-
-
-def _song_404() -> httpx.Response:
-    return httpx.Response(404, text="not found")
 
 
 async def _seed_user_and_lock(
@@ -116,15 +113,13 @@ async def test_post_with_bogus_slug_rejected_no_row_written(
     assert pg_pool is not None
     user_id, show_date = await _seed_user_and_lock(pg_pool)
 
-    # Sequence: handshake (init + initialized), then 3 get_song calls for
-    # the alphabetized pick set: blarghhh, fluffhead, tweezer. Only
-    # blarghhh 404s; the other two echo back valid slugs.
+    # Sequence: handshake (init + initialized), then a single batch
+    # validate_song_slugs call. The pick set after normalize_picks is
+    # alphabetized: blarghhh, fluffhead, tweezer. Only blarghhh is unknown.
     route = respx.post(MCP_URL)
     route.side_effect = [
         *_handshake_responses(),
-        _song_404(),
-        _song_ok("fluffhead"),
-        _song_ok("tweezer"),
+        _validate_ok(valid=["fluffhead", "tweezer"], unknown=["blarghhh"]),
     ]
 
     async_client.cookies.set(
@@ -166,13 +161,11 @@ async def test_post_preserves_valid_picks_in_form_after_error(
     assert pg_pool is not None
     user_id, show_date = await _seed_user_and_lock(pg_pool, handle="preserves")
 
-    # Sorted picks: fluffhead, tweezer, wat. wat 404s, the others echo.
+    # Sorted picks: fluffhead, tweezer, wat. wat is unknown.
     route = respx.post(MCP_URL)
     route.side_effect = [
         *_handshake_responses(),
-        _song_ok("fluffhead"),
-        _song_ok("tweezer"),
-        _song_404(),
+        _validate_ok(valid=["fluffhead", "tweezer"], unknown=["wat"]),
     ]
 
     async_client.cookies.set(
@@ -209,18 +202,23 @@ async def test_post_with_all_valid_slugs_creates_row(
     assert pg_pool is not None
     user_id, show_date = await _seed_user_and_lock(pg_pool, handle="all_valid")
 
-    # 6 distinct slugs => 6 get_song calls after the handshake. The picks
-    # are alphabetized by normalize_picks before validation: fluffhead,
-    # harry-hood, tweezer, then opener/closer/encore in original order.
+    # 6 distinct slugs => one batch validate_song_slugs call after the
+    # handshake. The picks are alphabetized by normalize_picks before
+    # validation: fluffhead, harry-hood, tweezer, then opener/closer/encore
+    # in original order.
     route = respx.post(MCP_URL)
     route.side_effect = [
         *_handshake_responses(),
-        _song_ok("fluffhead"),
-        _song_ok("harry-hood"),
-        _song_ok("tweezer"),
-        _song_ok("wilson"),
-        _song_ok("slave-to-the-traffic-light"),
-        _song_ok("tweezer-reprise"),
+        _validate_ok(
+            valid=[
+                "fluffhead",
+                "harry-hood",
+                "tweezer",
+                "wilson",
+                "slave-to-the-traffic-light",
+                "tweezer-reprise",
+            ]
+        ),
     ]
 
     async_client.cookies.set(
@@ -269,13 +267,13 @@ async def test_post_curl_bypass_attempt_rejected(
     assert pg_pool is not None
     user_id, show_date = await _seed_user_and_lock(pg_pool, handle="curl_bypass")
 
-    # Sorted picks: blarghhh, bogusone, fakey. All 404.
+    # Sorted picks: blarghhh, bogusone, fakey. All unknown.
     route = respx.post(MCP_URL)
     route.side_effect = [
         *_handshake_responses(),
-        _song_404(),
-        _song_404(),
-        _song_404(),
+        _validate_ok(
+            valid=[], unknown=["blarghhh", "bogusone", "fakey"]
+        ),
     ]
 
     async_client.cookies.set(
