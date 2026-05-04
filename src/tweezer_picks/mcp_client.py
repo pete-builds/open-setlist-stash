@@ -27,7 +27,7 @@ from typing import Any
 
 import httpx
 
-logger = logging.getLogger("phish_game.mcp_client")
+logger = logging.getLogger("tweezer_picks.mcp_client")
 
 
 class McpPhishError(RuntimeError):
@@ -98,7 +98,7 @@ class McpPhishClient:
             "params": {
                 "protocolVersion": self.PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "phish-game", "version": "0.1.0"},
+                "clientInfo": {"name": "tweezer-picks", "version": "0.1.0"},
             },
         }
         headers = {

@@ -26,10 +26,10 @@ import asyncpg
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from phish_game.auth import sign_user_id
-from phish_game.auth_email import _hash_token
-from phish_game.config import get_settings
-from phish_game.email import DisabledProvider, EmailProvider, LogProvider
+from tweezer_picks.auth import sign_user_id
+from tweezer_picks.auth_email import _hash_token
+from tweezer_picks.config import get_settings
+from tweezer_picks.email import DisabledProvider, EmailProvider, LogProvider
 from tests.conftest import requires_pg
 
 
@@ -58,8 +58,8 @@ def _build_app_with_provider(
     """Same pattern as conftest.build_app_with_pool but lets us inject a
     fake email provider directly.
     """
-    from phish_game import db as db_module
-    from phish_game.server import build_app
+    from tweezer_picks import db as db_module
+    from tweezer_picks.server import build_app
 
     db_module._pool = pool  # type: ignore[attr-defined]
     return build_app(get_settings(), email_provider=provider)
@@ -396,7 +396,7 @@ async def test_auth_login_round_trip_signs_in_new_browser(
     assert verify_resp.status_code == 303
     assert "phishgame_session" in verify_resp.cookies
     # The cookie must carry the same user_id as the verified email's owner.
-    from phish_game.auth import unsign_user_id
+    from tweezer_picks.auth import unsign_user_id
     raw_cookie = verify_resp.cookies["phishgame_session"]
     assert unsign_user_id(get_settings(), raw_cookie) == user_id
 
@@ -487,7 +487,7 @@ async def test_integration_log_provider_full_round_trip(
             captured.append(record.getMessage())
 
     handler = _ListHandler(level=logging.INFO)
-    email_logger = logging.getLogger("phish_game.email")
+    email_logger = logging.getLogger("tweezer_picks.email")
     email_logger.addHandler(handler)
     email_logger.setLevel(logging.INFO)
     try:

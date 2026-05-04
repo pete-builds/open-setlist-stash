@@ -34,11 +34,11 @@ from typing import Any
 
 import asyncpg
 
-from phish_game.auth import CurrentUser
-from phish_game.config import Settings
-from phish_game.email import EmailProvider, EmailSendError
+from tweezer_picks.auth import CurrentUser
+from tweezer_picks.config import Settings
+from tweezer_picks.email import EmailProvider, EmailSendError
 
-logger = logging.getLogger("phish_game.auth_email")
+logger = logging.getLogger("tweezer_picks.auth_email")
 
 
 # Cheap email regex per the plan: don't try to be perfect. RFC-5322 is a
@@ -109,10 +109,10 @@ def render_email_verify_body(
     *, handle: str, link: str, ttl_hours: int
 ) -> tuple[str, str]:
     """Return (subject, body) for an email_verify message."""
-    subject = "Confirm your phish-game email"
+    subject = "Confirm your tweezer-picks email"
     body = (
         f"Hi {handle},\n\n"
-        f"Click this link to attach this email to your phish-game handle:\n\n"
+        f"Click this link to attach this email to your tweezer-picks handle:\n\n"
         f"  {link}\n\n"
         f"The link expires in {ttl_hours} hours and can only be used once.\n\n"
         f"If you didn't request this, ignore this email.\n"
@@ -122,9 +122,9 @@ def render_email_verify_body(
 
 def render_login_body(*, link: str, ttl_hours: int) -> tuple[str, str]:
     """Return (subject, body) for a cross-browser login message."""
-    subject = "Sign in to phish-game"
+    subject = "Sign in to tweezer-picks"
     body = (
-        f"Click this link to sign in to phish-game:\n\n"
+        f"Click this link to sign in to tweezer-picks:\n\n"
         f"  {link}\n\n"
         f"The link expires in {ttl_hours} hours and can only be used once.\n\n"
         f"If you didn't request this, ignore this email.\n"

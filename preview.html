@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tweezer Picks — Lot Poster preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Honk&family=Anton&family=Special+Elite&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="src/tweezer_picks/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#">Tweezer Picks</a>
+    <span class="handle">handle: <strong>tweezerhead</strong></span>
+    <nav>
+      <a href="#">Leaderboard</a>
+      <a href="#">Leagues</a>
+      <a href="#">Account</a>
+    </nav>
+  </header>
+
+  <main class="content">
+
+    <h1>Tweezer Picks</h1>
+    <p class="muted" style="margin-top:0.4rem;">
+      <span class="stamp stamp-teal">Lot Only</span>
+      <span class="sticker">v0.2.0 BETA</span>
+      <span class="donut" aria-hidden="true"></span>
+      setlist picks &middot; weekly leaderboard &middot; private leagues
+    </p>
+
+    <div class="card">
+      <p>Welcome back, <strong>tweezerhead</strong>.</p>
+      <p>Next show on the board: <strong>2026-06-15</strong>
+        &middot; Madison Square Garden (New York, NY).
+      </p>
+      <p>
+        <a class="btn" href="#">Make your picks</a>
+        <a class="btn" href="#">Create or join a league</a>
+      </p>
+    </div>
+
+    <div class="lock">
+      Picks lock at <strong>22:00 ET</strong> &middot;
+      <span id="lock-countdown">14:23:07</span> until showtime
+    </div>
+
+    <h2>Your picks</h2>
+
+    <form>
+      <fieldset>
+        <legend>Bag picks</legend>
+
+        <div class="song-picker song-picker-picked">
+          <label for="bag1">Bag pick 1</label>
+          <input class="song-picker-title" type="text" id="bag1" value="You Enjoy Myself">
+          <p class="picker-hint">picked &middot; gap 4, last seen 2024-06-12</p>
+        </div>
+
+        <div class="song-picker">
+          <label for="bag2">Bag pick 2</label>
+          <input class="song-picker-title" type="text" id="bag2" placeholder="start typing a song">
+          <p class="picker-hint">type to search, enter to lock in</p>
+        </div>
+
+        <div class="song-picker song-picker-bad">
+          <label for="bag3">Bag pick 3</label>
+          <input class="song-picker-title" type="text" id="bag3" value="blarghhh">
+          <p class="picker-hint">no song matched, try another spelling</p>
+        </div>
+
+        <button type="button" class="btn">Lock it in</button>
+        <a class="btn" href="#">View predictions</a>
+      </fieldset>
+    </form>
+
+    <h2>Weekly leaderboard</h2>
+
+    <div class="scope-tabs">
+      <a class="scope-tab is-active" href="#">Weekly</a>
+      <a class="scope-tab" href="#">Tour</a>
+      <a class="scope-tab" href="#">All-time</a>
+    </div>
+
+    <p class="scope-key-list">Bucket: <a href="#">2026-W24</a> &middot; <a href="#">2026-W23</a> &middot; <a href="#">2026-W22</a></p>
+
+    <div class="leaderboard-wrap">
+      <table class="leaderboard">
+        <thead>
+          <tr>
+            <th class="num">#</th>
+            <th>Handle</th>
+            <th class="num">Score</th>
+            <th class="num">Shows</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">1</td><td><a href="#">harpua</a></td><td class="num">142</td><td class="num">3</td></tr>
+          <tr><td class="num">2</td><td><a href="#">runlikeantelope</a></td><td class="num">128</td><td class="num">3</td></tr>
+          <tr class="is-me"><td class="num">3</td><td><a href="#">tweezerhead</a><span class="me-tag">you</span></td><td class="num">114</td><td class="num">3</td></tr>
+          <tr><td class="num">4</td><td><a href="#">divided-sky</a></td><td class="num">98</td><td class="num">2</td></tr>
+          <tr><td class="num">5</td><td><a href="#">birdsofafeather</a></td><td class="num">86</td><td class="num">3</td></tr>
+          <tr><td class="num">6</td><td><a href="#">bbfcfm</a></td><td class="num">71</td><td class="num">2</td></tr>
+          <tr><td class="num">7</td><td><a href="#">prince-caspian</a></td><td class="num">54</td><td class="num">1</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Your leagues</h2>
+
+    <div class="card">
+      <div class="league-card-head">
+        <a class="league-name" href="#">Tweezerheads United</a>
+        <span class="claim-stub">12 members &middot; tour scope</span>
+      </div>
+      <p>Last tick: <code>2026-05-04T17:21Z</code> &middot; <a href="#">leaderboard</a> &middot; <a href="#">settings</a></p>
+    </div>
+
+    <div class="card">
+      <div class="league-card-head">
+        <a class="league-name" href="#">Donut Squad</a>
+        <span class="claim-stub">5 members &middot; all shows</span>
+      </div>
+      <p>You're the host. <a href="#">Rotate slug</a> &middot; <a href="#">Soft delete</a></p>
+    </div>
+
+    <h2>Stamps + stickers reference</h2>
+    <p>
+      <span class="stamp">Locked</span>
+      <span class="stamp stamp-teal">Showtime</span>
+      <span class="stamp stamp-yellow">Resolved</span>
+      <span class="sticker">NEW</span>
+      <span class="sticker" style="transform: rotate(-4deg); background: var(--teal); color: var(--paper-bright);">FREE</span>
+      <span class="donut"></span><span class="donut"></span><span class="donut"></span>
+    </p>
+
+    <div class="card error-card">
+      <h2>Error state</h2>
+      <p class="error">Lock has passed. Predictions are read-only.</p>
+      <p>Try the <a href="#">post-lock view</a>.</p>
+    </div>
+
+  </main>
+
+  <footer class="footer">
+    <small>Phase 4 build &middot; Tailscale/LAN only &middot; v0.2.0</small>
+  </footer>
+
+  <script>
+    // tiny countdown demo
+    let s = 14 * 3600 + 23 * 60 + 7;
+    const el = document.getElementById('lock-countdown');
+    setInterval(() => {
+      s = Math.max(0, s - 1);
+      const h = String(Math.floor(s / 3600)).padStart(2, '0');
+      const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+      const sec = String(s % 60).padStart(2, '0');
+      el.textContent = `${h}:${m}:${sec}`;
+    }, 1000);
+  </script>
+</body>
+</html>

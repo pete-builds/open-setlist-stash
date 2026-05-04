@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Tweezer Picks{% endblock %}
+{% block content %}
+  <h1>Tweezer Picks</h1>
+  <p class="muted" style="margin-top:0.4rem;">
+    <span class="stamp stamp-teal">Lot Only</span>
+    <span class="sticker">v{{ version }} BETA</span>
+    <span class="donut" aria-hidden="true"></span>
+    setlist picks &middot; weekly leaderboard &middot; private leagues
+  </p>
+  {% if current_user %}
+    <div class="card">
+      <p>Welcome back, <strong>{{ current_user.handle }}</strong>.</p>
+      {% if upcoming_show %}
+        <p>Next show on the board: <strong>{{ upcoming_show.show_date }}</strong>
+          {% if upcoming_show.venue_name %}&middot; {{ upcoming_show.venue_name }}{% endif %}
+          {% if upcoming_show.location %} ({{ upcoming_show.location }}){% endif %}.
+        </p>
+        <p>
+          <a class="btn" href="/predict/{{ upcoming_show.show_date }}">Make your picks</a>
+          <a class="btn" href="/leagues">Create or join a league</a>
+        </p>
+      {% else %}
+        <p class="muted">No upcoming show on the board yet. Check back soon.</p>
+        <p>
+          <a class="btn" href="/leagues">Create or join a league</a>
+        </p>
+      {% endif %}
+    </div>
+  {% else %}
+    <h2>Pick a handle</h2>
+    <p>Anonymous play. {{ handle_help }}</p>
+    <form method="post" action="/handle">
+      <fieldset>
+        <legend>Sign on</legend>
+        <label for="handle">Handle</label>
+        <input type="text" id="handle" name="handle" required minlength="2"
+               maxlength="32" pattern="[A-Za-z0-9_-]{2,32}" autofocus
+               placeholder="yer-name-here">
+        {% if error %}
+          <p class="error">{{ error }}</p>
+        {% endif %}
+        <button type="submit" class="btn">Start playing</button>
+      </fieldset>
+    </form>
+    <p class="muted">
+      Already have a handle attached to an email?
+      <a href="/auth/login">Sign in by email</a>.
+    </p>
+  {% endif %}
+{% endblock %}

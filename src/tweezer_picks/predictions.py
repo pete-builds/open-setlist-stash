@@ -21,7 +21,7 @@ from typing import Any
 
 import asyncpg
 
-logger = logging.getLogger("phish_game.predictions")
+logger = logging.getLogger("tweezer_picks.predictions")
 
 
 class PredictionError(ValueError):

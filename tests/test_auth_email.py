@@ -23,8 +23,8 @@ import asyncpg
 import pytest
 from pydantic import SecretStr
 
-from phish_game.auth import CurrentUser
-from phish_game.auth_email import (
+from tweezer_picks.auth import CurrentUser
+from tweezer_picks.auth_email import (
     EmailFormatError,
     EmailTakenError,
     _hash_token,
@@ -39,8 +39,8 @@ from phish_game.auth_email import (
     validate_email,
     verify_token,
 )
-from phish_game.config import Settings
-from phish_game.email import EmailSendError
+from tweezer_picks.config import Settings
+from tweezer_picks.email import EmailSendError
 from tests.conftest import requires_pg
 
 # ---------- pure unit tests (no DB) ----------
@@ -98,7 +98,7 @@ def test_render_email_bodies_include_link_and_handle() -> None:
     subj, body = render_email_verify_body(
         handle="tweezerfan", link="http://x/auth/verify?token=AAA", ttl_hours=24
     )
-    assert "phish-game" in subj
+    assert "tweezer-picks" in subj
     assert "tweezerfan" in body
     assert "http://x/auth/verify?token=AAA" in body
     assert "24" in body

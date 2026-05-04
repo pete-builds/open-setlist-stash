@@ -1,6 +1,6 @@
-# phish-game
+# tweezer-picks
 
-[![CI](https://github.com/pete-builds/phish-game/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/phish-game/actions/workflows/ci.yml)
+[![CI](https://github.com/pete-builds/tweezer-picks/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/tweezer-picks/actions/workflows/ci.yml)
 
 Setlist prediction game for Phish shows. Phase 4 of the Phish Data Platform.
 
@@ -27,7 +27,7 @@ prediction window. Gap stats and venue history unlock after lock.
 The game never touches the phish-vault Postgres directly. Every vault read
 goes through the [mcp-phish](https://github.com/pete-builds/mcp-phish) HTTP
 endpoint at `http://mcp-phish:3705/mcp` (MCP Streamable HTTP, JSON-RPC).
-A small async wrapper in `src/phish_game/mcp_client.py` calls the 14 tools
+A small async wrapper in `src/tweezer_picks/mcp_client.py` calls the 14 tools
 exposed by mcp-phish.
 
 ## Phase 4 plan

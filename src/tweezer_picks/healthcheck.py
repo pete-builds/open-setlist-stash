@@ -10,7 +10,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from phish_game.config import get_settings
+from tweezer_picks.config import get_settings
 
 
 def main() -> int:

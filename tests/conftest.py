@@ -4,10 +4,10 @@ Route + DB tests need a real Postgres. We don't spin one up in the test
 process; instead we look for ``TEST_PG_DSN`` in the env. If absent, the DB
 fixtures yield None and the marked tests skip.
 
-To run the full suite against the live nix1 phish-game-pg container:
+To run the full suite against the live nix1 tweezer-picks-pg container:
 
     ssh -L 5434:127.0.0.1:5434 pete@192.168.86.20 -N &
-    export TEST_PG_DSN="postgresql://phish_game:<pw>@127.0.0.1:5434/phish_game_test"
+    export TEST_PG_DSN="postgresql://tweezer_picks:<pw>@127.0.0.1:5434/tweezer_picks_test"
     psql "$TEST_PG_DSN" -c 'SELECT 1'   # pre-create the test DB
     pytest
 
@@ -55,7 +55,7 @@ async def pg_pool() -> AsyncIterator[asyncpg.Pool[Any] | None]:
         raise RuntimeError("asyncpg.create_pool returned None")
     # Ensure schema is present. We import the migrate module from the
     # package and run it. Tests run in development; safe.
-    from phish_game.migrate import run_migrations
+    from tweezer_picks.migrate import run_migrations
     await run_migrations(pool)
     # Truncate game tables before each test for a clean slate. We don't
     # touch schema_version. ``league_members`` is CASCADEd from leagues +
@@ -87,9 +87,9 @@ def build_app_with_pool(pool: asyncpg.Pool[Any]) -> FastAPI:
     by the ``pg_pool`` fixture, and the pool is shared via the ``db`` module's
     private global.
     """
-    from phish_game import db as db_module
-    from phish_game.config import get_settings
-    from phish_game.server import build_app
+    from tweezer_picks import db as db_module
+    from tweezer_picks.config import get_settings
+    from tweezer_picks.server import build_app
     db_module._pool = pool  # type: ignore[attr-defined]
     return build_app(get_settings())
 

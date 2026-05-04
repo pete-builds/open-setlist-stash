@@ -21,8 +21,8 @@ import asyncpg
 import pytest
 from httpx import AsyncClient
 
-from phish_game.auth import sign_user_id
-from phish_game.config import get_settings
+from tweezer_picks.auth import sign_user_id
+from tweezer_picks.config import get_settings
 from tests.conftest import requires_pg
 
 

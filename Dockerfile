@@ -52,6 +52,6 @@ USER game
 EXPOSE 3706
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
-    CMD ["python", "-m", "phish_game.healthcheck"]
+    CMD ["python", "-m", "tweezer_picks.healthcheck"]
 
-ENTRYPOINT ["python", "-m", "phish_game.server"]
+ENTRYPOINT ["python", "-m", "tweezer_picks.server"]

@@ -42,7 +42,7 @@ from typing import Any
 
 import asyncpg
 
-logger = logging.getLogger("phish_game.leaderboard")
+logger = logging.getLogger("tweezer_picks.leaderboard")
 
 
 # ----- types ----------------------------------------------------------------

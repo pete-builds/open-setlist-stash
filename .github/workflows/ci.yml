@@ -39,7 +39,7 @@ jobs:
         run: ruff check src tests
 
       - name: Mypy (strict)
-        run: mypy src/phish_game
+        run: mypy src/tweezer_picks
 
   test:
     name: Tests + Coverage
@@ -50,7 +50,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: test
-          POSTGRES_DB: phish_game_test
+          POSTGRES_DB: tweezer_picks_test
         ports:
           - 5432:5432
         options: >-
@@ -59,7 +59,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      TEST_PG_DSN: postgresql://postgres:test@localhost:5432/phish_game_test
+      TEST_PG_DSN: postgresql://postgres:test@localhost:5432/tweezer_picks_test
     steps:
       - uses: actions/checkout@v6
 
@@ -113,17 +113,17 @@ jobs:
           context: .
           push: false
           load: true
-          tags: phish-game:ci
+          tags: tweezer-picks:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Save image for scan job
-        run: docker save phish-game:ci -o /tmp/phish-game.tar
+        run: docker save tweezer-picks:ci -o /tmp/tweezer-picks.tar
 
       - uses: actions/upload-artifact@v7
         with:
           name: docker-image
-          path: /tmp/phish-game.tar
+          path: /tmp/tweezer-picks.tar
 
   trivy-scan:
     name: Trivy security scan
@@ -138,7 +138,7 @@ jobs:
           path: /tmp
 
       - name: Load image
-        run: docker load -i /tmp/phish-game.tar
+        run: docker load -i /tmp/tweezer-picks.tar
 
       - name: Trivy fs scan (Dockerfile + lockfiles)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -153,7 +153,7 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
-          image-ref: phish-game:ci
+          image-ref: tweezer-picks:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"

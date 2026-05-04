@@ -13,8 +13,8 @@ PHASE-4-PLAN.md §5 is the design source. Pete approval (build session 2):
   process doesn't poison subsequent ticks.
 
 Entrypoints:
-- ``python -m phish_game.resolve``         - single tick, exit 0
-- ``python -m phish_game.resolve --loop``  - run forever, sleep between ticks
+- ``python -m tweezer_picks.resolve``         - single tick, exit 0
+- ``python -m tweezer_picks.resolve --loop``  - run forever, sleep between ticks
 
 Both honor ``RESOLVER_INTERVAL_SECONDS`` (default 1800) and
 ``RESOLVER_CANCEL_AFTER_HOURS`` (default 72).
@@ -33,21 +33,21 @@ from typing import Any
 
 import asyncpg
 
-from phish_game import __version__
-from phish_game.config import Settings, get_settings
-from phish_game.db import close_pool, get_pool, init_pool
-from phish_game.leaderboard import rebuild_all, rebuild_leagues
-from phish_game.logging_setup import configure_logging
-from phish_game.mcp_client import (
+from tweezer_picks import __version__
+from tweezer_picks.config import Settings, get_settings
+from tweezer_picks.db import close_pool, get_pool, init_pool
+from tweezer_picks.leaderboard import rebuild_all, rebuild_leagues
+from tweezer_picks.logging_setup import configure_logging
+from tweezer_picks.mcp_client import (
     McpPhishClient,
     McpPhishError,
     McpPhishNotFound,
     McpPhishUnavailable,
 )
-from phish_game.migrate import run_migrations
-from phish_game.scoring import score_prediction
+from tweezer_picks.migrate import run_migrations
+from tweezer_picks.scoring import score_prediction
 
-logger = logging.getLogger("phish_game.resolve")
+logger = logging.getLogger("tweezer_picks.resolve")
 
 
 # ----- setlist parsing ------------------------------------------------------
@@ -648,10 +648,10 @@ async def _amain(loop: bool, interval_seconds: int) -> int:
 
 
 def main() -> None:
-    """CLI: ``phish-game-resolve`` (one tick) or ``--loop`` (forever)."""
+    """CLI: ``tweezer-picks-resolve`` (one tick) or ``--loop`` (forever)."""
     parser = argparse.ArgumentParser(
-        prog="phish-game-resolve",
-        description="Resolve unresolved phish-game predictions against published setlists.",
+        prog="tweezer-picks-resolve",
+        description="Resolve unresolved tweezer-picks predictions against published setlists.",
     )
     parser.add_argument(
         "--loop",

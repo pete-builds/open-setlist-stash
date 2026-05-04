@@ -27,9 +27,9 @@ import logging
 from email.message import EmailMessage
 from typing import Protocol
 
-from phish_game.config import Settings
+from tweezer_picks.config import Settings
 
-logger = logging.getLogger("phish_game.email")
+logger = logging.getLogger("tweezer_picks.email")
 
 
 class EmailSendError(RuntimeError):
@@ -78,7 +78,7 @@ class LogProvider:
 
     Useful for dev and for the nix1-without-app-password mode. The full
     body is written at INFO so the magic link is grep-able from
-    ``docker logs phish-game``.
+    ``docker logs tweezer-picks``.
 
     Caveat: do NOT use in production. Anyone with log access can complete
     a verification flow. Documented in the env var help text.

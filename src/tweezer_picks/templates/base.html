@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}phish-game{% endblock %}</title>
+  <title>{% block title %}Tweezer Picks{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,wght@0,400;0,500;0,600;1,400;1,500&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Honk&family=Anton&family=Special+Elite&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">phish-game</a>
+    <a class="brand" href="/">Tweezer Picks</a>
     {% if current_user %}
       <span class="handle">handle: <strong>{{ current_user.handle }}</strong></span>
     {% endif %}

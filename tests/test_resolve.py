@@ -19,8 +19,8 @@ from typing import Any
 
 import pytest
 
-from phish_game.config import Settings
-from phish_game.resolve import (
+from tweezer_picks.config import Settings
+from tweezer_picks.resolve import (
     parse_setlist,
     run_tick,
     watchdog_stale_running,
@@ -51,13 +51,13 @@ class _FakeMcpPhishClient:
 
     async def get_show(self, date_or_id: str) -> dict[str, Any]:
         if date_or_id not in self._shows:
-            from phish_game.mcp_client import McpPhishNotFound
+            from tweezer_picks.mcp_client import McpPhishNotFound
             raise McpPhishNotFound(f"unknown show {date_or_id}")
         return self._shows[date_or_id]
 
     async def get_song(self, slug: str) -> dict[str, Any]:
         if slug not in self._songs:
-            from phish_game.mcp_client import McpPhishNotFound
+            from tweezer_picks.mcp_client import McpPhishNotFound
             raise McpPhishNotFound(f"unknown song {slug}")
         return self._songs[slug]
 
@@ -88,7 +88,7 @@ def _make_settings() -> Settings:
 async def test_run_tick_noop_when_no_open_locks(
     pg_pool: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from phish_game import db, resolve
+    from tweezer_picks import db, resolve
 
     monkeypatch.setattr(db, "_pool", pg_pool)
 
@@ -118,7 +118,7 @@ async def test_run_tick_scores_published_setlist(
 ) -> None:
     """Seed a prediction whose lock_at is in the past, mock a published
     setlist, run the tick, assert score + breakdown + resolved_at."""
-    from phish_game import db, resolve
+    from tweezer_picks import db, resolve
 
     monkeypatch.setattr(db, "_pool", pg_pool)
 
@@ -221,7 +221,7 @@ async def test_run_tick_skips_when_setlist_not_yet_published(
 
     Behaviour: leave resolved_at NULL, predictions.score NULL, run status='noop'.
     """
-    from phish_game import db, resolve
+    from tweezer_picks import db, resolve
 
     monkeypatch.setattr(db, "_pool", pg_pool)
 
@@ -284,7 +284,7 @@ async def test_run_tick_cancels_show_past_threshold(
     pg_pool: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A lock older than the cancel window with no setlist gets stamped cancelled."""
-    from phish_game import db, resolve
+    from tweezer_picks import db, resolve
 
     monkeypatch.setattr(db, "_pool", pg_pool)
 

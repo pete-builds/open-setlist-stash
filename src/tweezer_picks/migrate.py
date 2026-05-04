@@ -18,7 +18,7 @@ from typing import Any
 
 import asyncpg
 
-logger = logging.getLogger("phish_game.migrate")
+logger = logging.getLogger("tweezer_picks.migrate")
 
 _VERSION_RE = re.compile(r"^(\d+)_")
 
@@ -30,7 +30,7 @@ def _migrations_dir() -> Path:
     ``migrations/`` dir is two levels up from this file.
     """
     here = Path(__file__).resolve().parent
-    # src/phish_game/migrate.py -> repo root is two dirs up
+    # src/tweezer_picks/migrate.py -> repo root is two dirs up
     candidate = here.parent.parent / "migrations"
     if candidate.is_dir():
         return candidate
@@ -78,7 +78,7 @@ async def run_migrations(pool: asyncpg.Pool[Any]) -> int:
         pending.append((version, path))
 
     if not pending:
-        logger.info("phish-game migrations: nothing to do")
+        logger.info("tweezer-picks migrations: nothing to do")
         return 0
 
     for version, path in pending:
@@ -92,5 +92,5 @@ async def run_migrations(pool: asyncpg.Pool[Any]) -> int:
                 "ON CONFLICT (version) DO NOTHING",
                 version,
             )
-    logger.info("phish-game migrations applied", extra={"count": len(pending)})
+    logger.info("tweezer-picks migrations applied", extra={"count": len(pending)})
     return len(pending)

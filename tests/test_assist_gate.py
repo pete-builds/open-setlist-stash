@@ -17,8 +17,8 @@ from typing import Any
 
 import asyncpg
 
-from phish_game.config import get_settings
-from phish_game.locks import assist_allowed
+from tweezer_picks.config import get_settings
+from tweezer_picks.locks import assist_allowed
 from tests.conftest import requires_pg
 
 

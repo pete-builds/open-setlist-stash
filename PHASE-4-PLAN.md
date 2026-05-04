@@ -1,4 +1,4 @@
-# Phase 4 Plan — `phish-game`
+# Phase 4 Plan — `tweezer-picks`
 
 Setlist prediction game for Phish shows. Phase 4 of the Phish Data Platform.
 This document is the source of truth for the build. Subsequent Link sessions
@@ -29,7 +29,7 @@ Why over Astro:
 - **Pete already runs FastAPI on nix1** (Model Arena, nfl-web,
   anthropic-tracker). One stack family, one deploy pattern, known
   operational footprint.
-- **Cron-friendly.** A second Python entrypoint (`phish-game-resolve`)
+- **Cron-friendly.** A second Python entrypoint (`tweezer-picks-resolve`)
   runs as a cron-profile container. Astro would need an extra Node
   runtime for the resolver.
 - **Direct path to mcp-phish.** httpx + asyncio is the same idiom we use
@@ -281,10 +281,10 @@ Phase 4b adds a CLI for it.
 
 ## 5. Auto-resolve cron design
 
-A separate process (`phish-game-resolve`) runs every 30 minutes via either:
+A separate process (`tweezer-picks-resolve`) runs every 30 minutes via either:
 
 - **Option A:** docker compose `cron` profile + a host-level `cron` entry
-  invoking `docker compose --profile cron run --rm phish-game-resolve`.
+  invoking `docker compose --profile cron run --rm tweezer-picks-resolve`.
   Mirrors `phish-vault`. **Recommended.**
 - **Option B:** an APScheduler thread inside the FastAPI app process.
   Smaller ops surface, but complicates restarts (a deploy mid-resolve
@@ -405,7 +405,7 @@ Tested via:
 
 ## 8. MCP client integration approach
 
-A small async wrapper (`src/phish_game/mcp_client.py`, **stub for kickoff**)
+A small async wrapper (`src/tweezer_picks/mcp_client.py`, **stub for kickoff**)
 calls the mcp-phish HTTP endpoint over JSON-RPC.
 
 ### Transport
@@ -494,12 +494,12 @@ Phase 4 ships the game core. These belong to **4b** or later:
 
 Mirrors the Phase 1 nine-point list in `phish-platform-roadmap.md`.
 
-1. **Container health.** `docker compose ps` shows `phish-game` healthy
-   and `phish-game-pg` healthy on nix1; `curl http://nix1:3706/healthz`
+1. **Container health.** `docker compose ps` shows `tweezer-picks` healthy
+   and `tweezer-picks-pg` healthy on nix1; `curl http://nix1:3706/healthz`
    returns 200 with `{"status":"ok","version":"<v>"}`.
-2. **Schema migrated.** `phish-game-pg` has `schema_version` row 1, all
+2. **Schema migrated.** `tweezer-picks-pg` has `schema_version` row 1, all
    five tables exist, `predictions_lock_guard` trigger exists.
-3. **MCP path works.** A curl from inside the `phish-game` container to
+3. **MCP path works.** A curl from inside the `tweezer-picks` container to
    `http://mcp-phish:3705/mcp` returns a JSON-RPC response (not a DNS
    error). `/healthz` extension reports `mcp_phish.reachable=true`.
 4. **Game flow smoke (manual).** A new visitor:
@@ -514,7 +514,7 @@ Mirrors the Phase 1 nine-point list in `phish-platform-roadmap.md`.
    only. No `gap_current` leak. Verified by unit test AND HTTP smoke.
 6. **Resolver works.** A scripted test: insert a fake `prediction_locks`
    row + a fake `predictions` row with a real past show date (e.g.
-   1995-12-30 with known setlist). Run `phish-game-resolve`. Confirm:
+   1995-12-30 with known setlist). Run `tweezer-picks-resolve`. Confirm:
    - `scoring_runs` row written with `status='success'`
    - `predictions.score` populated
    - `predictions.score_breakdown` JSON shape matches plan
@@ -528,7 +528,7 @@ Mirrors the Phase 1 nine-point list in `phish-platform-roadmap.md`.
    workflow lands in a follow-up session — kickoff omits it
    intentionally to keep scope tight, same way mcp-phish kickoff did.)
 10. **Memory updated.** `phish-platform.md` shows Phase 4 status
-    advanced; `homelab-webapps.md` claims port 3706 as `phish-game`.
+    advanced; `homelab-webapps.md` claims port 3706 as `tweezer-picks`.
 
 When all 10 pass, Phase 4 is done. Phase 5 (`phish-web`) can start.
 
@@ -545,7 +545,7 @@ chunk, in order.
 | 2 | mcp-phish client wrapper + DB connection pool + migrations runner | `mcp_client.py`, `db.py`, `migrate` CLI |
 | 3 | Auth (anonymous handle) + session cookie | handle form, signed cookie, `users` write path |
 | 4 | Picks form (3 songs + opener + closer + encore) + lock-aware submit | `/predict/<show_date>` flow |
-| 5 | Resolver entrypoint + scoring formula + scoring_runs audit | `phish-game-resolve` CLI |
+| 5 | Resolver entrypoint + scoring formula + scoring_runs audit | `tweezer-picks-resolve` CLI |
 | 6 | Leaderboards (weekly / tour / all-time) + HTMX refresh | `/leaderboard` |
 | 7 | Lock countdown + post-lock assist UI (gap stats, venue history) | gated assist views |
 | 8 | CI workflow (ruff + mypy + pytest + Trivy + Dependabot) | `.github/workflows/ci.yml` |

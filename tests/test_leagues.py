@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from phish_game.config import Settings
-from phish_game.leagues import (
+from tweezer_picks.config import Settings
+from tweezer_picks.leagues import (
     SLUG_WORDLIST,
     LeagueDateWindowError,
     LeagueForbidden,

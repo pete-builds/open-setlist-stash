@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "phish-game"
+name = "tweezer-picks"
 version = "0.2.0"
 description = "Setlist prediction game for Phish shows. Phase 4 of the Phish Data Platform."
 readme = "README.md"
@@ -45,20 +45,20 @@ dev = [
 ]
 
 [project.scripts]
-phish-game = "phish_game.server:main"
-phish-game-resolve = "phish_game.resolve:main"
-phish-game-healthcheck = "phish_game.healthcheck:main"
+tweezer-picks = "tweezer_picks.server:main"
+tweezer-picks-resolve = "tweezer_picks.resolve:main"
+tweezer-picks-healthcheck = "tweezer_picks.healthcheck:main"
 
 [project.urls]
-Homepage = "https://github.com/pete-builds/phish-game"
-Repository = "https://github.com/pete-builds/phish-game"
-Issues = "https://github.com/pete-builds/phish-game/issues"
+Homepage = "https://github.com/pete-builds/tweezer-picks"
+Repository = "https://github.com/pete-builds/tweezer-picks"
+Issues = "https://github.com/pete-builds/tweezer-picks/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-phish_game = ["py.typed", "templates/*.html", "static/*"]
+tweezer_picks = ["py.typed", "templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
@@ -66,7 +66,7 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=phish_game",
+    "--cov=tweezer_picks",
     "--cov-report=term-missing",
     "--cov-report=xml",
 ]
@@ -76,7 +76,7 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true
-source = ["phish_game"]
+source = ["tweezer_picks"]
 
 [tool.coverage.report]
 show_missing = true
@@ -126,7 +126,7 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 disallow_any_generics = true
 mypy_path = ["src"]
-files = ["src/phish_game"]
+files = ["src/tweezer_picks"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]

@@ -9,7 +9,7 @@ import math
 
 import pytest
 
-from phish_game.scoring import (
+from tweezer_picks.scoring import (
     CLOSER_BONUS,
     ENCORE_BONUS,
     OPENER_BONUS,

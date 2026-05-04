@@ -32,9 +32,9 @@ from typing import Any
 
 import asyncpg
 
-from phish_game.config import Settings
+from tweezer_picks.config import Settings
 
-logger = logging.getLogger("phish_game.leagues")
+logger = logging.getLogger("tweezer_picks.leagues")
 
 
 # ----- errors ---------------------------------------------------------------

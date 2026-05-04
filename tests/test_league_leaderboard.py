@@ -17,12 +17,12 @@ from typing import Any
 
 import pytest
 
-from phish_game.config import Settings
-from phish_game.leaderboard import (
+from tweezer_picks.config import Settings
+from tweezer_picks.leaderboard import (
     fetch_leaderboard,
     rebuild_leagues,
 )
-from phish_game.leagues import (
+from tweezer_picks.leagues import (
     create_league,
     join_league,
     soft_delete_league,

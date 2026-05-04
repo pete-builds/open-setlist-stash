@@ -15,8 +15,8 @@ import asyncpg
 import pytest
 from httpx import AsyncClient
 
-from phish_game.auth import sign_user_id
-from phish_game.config import get_settings
+from tweezer_picks.auth import sign_user_id
+from tweezer_picks.config import get_settings
 from tests.conftest import requires_pg
 
 
@@ -301,7 +301,7 @@ async def test_full_happy_path_alice_creates_bob_joins_then_leaderboard(
             past_lock,
         )
 
-    from phish_game.leaderboard import rebuild_leagues
+    from tweezer_picks.leaderboard import rebuild_leagues
 
     await rebuild_leagues(pg_pool)
 

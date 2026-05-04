@@ -5,10 +5,10 @@ x-logging: &default-logging
     max-file: "3"
 
 services:
-  phish-game:
+  tweezer-picks:
     build: .
-    image: phish-game:0.2.0
-    container_name: phish-game
+    image: tweezer-picks:0.2.0
+    container_name: tweezer-picks
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -32,7 +32,7 @@ services:
       - mcp-phish
     logging: *default-logging
     healthcheck:
-      test: ["CMD", "python", "-m", "phish_game.healthcheck"]
+      test: ["CMD", "python", "-m", "tweezer_picks.healthcheck"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -40,14 +40,14 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  phish-game-resolver:
-    # Same image as phish-game; different command. Inside-container loop
+  tweezer-picks-resolver:
+    # Same image as tweezer-picks; different command. Inside-container loop
     # (PHASE-4-PLAN.md §5 Option B). Sleeps RESOLVER_INTERVAL_SECONDS between
     # ticks. Restart policy + healthcheck restart it on transient failures
     # without scheduling burden on the host.
     build: .
-    image: phish-game:0.2.0
-    container_name: phish-game-resolver
+    image: tweezer-picks:0.2.0
+    container_name: tweezer-picks-resolver
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -62,7 +62,7 @@ services:
     networks:
       - default
       - mcp-phish
-    entrypoint: ["python", "-m", "phish_game.resolve", "--loop"]
+    entrypoint: ["python", "-m", "tweezer_picks.resolve", "--loop"]
     # The Dockerfile inherits a /healthz HEALTHCHECK from the FastAPI app.
     # The resolver container does not run the HTTP server, so disable it.
     # Container liveness here is "process is running"; tick health is
@@ -75,21 +75,21 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: phish-game-pg
+    container_name: tweezer-picks-pg
     restart: unless-stopped
     environment:
-      POSTGRES_DB: "${PG_DB:-phish_game}"
-      POSTGRES_USER: "${PG_USER:-phish_game}"
+      POSTGRES_DB: "${PG_DB:-tweezer_picks}"
+      POSTGRES_USER: "${PG_USER:-tweezer_picks}"
       POSTGRES_PASSWORD: "${PG_PASSWORD:?PG_PASSWORD must be set in .env}"
     volumes:
-      - phish-game-pg-data:/var/lib/postgresql/data
+      - tweezer-picks-pg-data:/var/lib/postgresql/data
     # Loopback-only host binding for ad-hoc queries; cross-container traffic
     # uses the docker bridge.
     ports:
       - "127.0.0.1:5434:5432"
     healthcheck:
       test:
-        ["CMD-SHELL", "pg_isready -U ${PG_USER:-phish_game} -d ${PG_DB:-phish_game}"]
+        ["CMD-SHELL", "pg_isready -U ${PG_USER:-tweezer_picks} -d ${PG_DB:-tweezer_picks}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -97,7 +97,7 @@ services:
     logging: *default-logging
 
 volumes:
-  phish-game-pg-data:
+  tweezer-picks-pg-data:
 
 networks:
   mcp-phish:

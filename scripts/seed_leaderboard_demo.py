@@ -18,12 +18,12 @@ Demo data is marked: handles start with ``demo_`` and the show_date is
 (predictions cascade via show_date FK; users can be deleted explicitly).
 
 Usage (local with TEST_PG_DSN):
-    export PG_HOST=127.0.0.1 PG_PORT=5434 PG_DB=phish_game \
-           PG_USER=phish_game PG_PASSWORD=...
+    export PG_HOST=127.0.0.1 PG_PORT=5434 PG_DB=tweezer_picks \
+           PG_USER=tweezer_picks PG_PASSWORD=...
     python -m scripts.seed_leaderboard_demo
 
 Usage on nix1 (inside the container):
-    docker compose exec phish-game python -m scripts.seed_leaderboard_demo
+    docker compose exec tweezer-picks python -m scripts.seed_leaderboard_demo
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ sys.path.insert(0, str(_HERE.parent / "src"))
 
 import asyncpg  # noqa: E402
 
-from phish_game.config import get_settings  # noqa: E402
-from phish_game.leaderboard import (  # noqa: E402
+from tweezer_picks.config import get_settings  # noqa: E402
+from tweezer_picks.leaderboard import (  # noqa: E402
     fetch_leaderboard,
     list_scope_keys,
     rebuild_all,

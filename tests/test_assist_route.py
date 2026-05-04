@@ -28,7 +28,7 @@ from unittest.mock import patch
 import asyncpg
 from httpx import AsyncClient
 
-from phish_game.config import get_settings
+from tweezer_picks.config import get_settings
 from tests.conftest import requires_pg
 
 
@@ -147,11 +147,11 @@ async def test_assist_pre_lock_with_admin_override_unlocks(
     base = get_settings()
     overridden = base.model_copy(update={"assist_pre_lock": True})
 
-    # server.py does ``from phish_game.locks import assist_allowed`` at import
+    # server.py does ``from tweezer_picks.locks import assist_allowed`` at import
     # time, so the route resolves the symbol from the server module's
     # namespace. Patch THAT binding (not locks.assist_allowed).
-    from phish_game import locks as locks_module
-    from phish_game import server as server_module
+    from tweezer_picks import locks as locks_module
+    from tweezer_picks import server as server_module
     real_assist = locks_module.assist_allowed
 
     async def _gated(pool: Any, sd: Any, settings: Any) -> bool:

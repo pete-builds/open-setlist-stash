@@ -18,7 +18,7 @@ import httpx
 import pytest
 import respx
 
-from phish_game.mcp_client import McpPhishClient, McpPhishNotFound, McpPhishUnavailable
+from tweezer_picks.mcp_client import McpPhishClient, McpPhishNotFound, McpPhishUnavailable
 
 URL = "http://mcp-phish:3705/mcp"
 

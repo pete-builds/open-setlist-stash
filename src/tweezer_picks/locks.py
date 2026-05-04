@@ -32,10 +32,10 @@ from zoneinfo import ZoneInfo
 
 import asyncpg
 
-from phish_game.config import Settings
-from phish_game.mcp_client import McpPhishClient
+from tweezer_picks.config import Settings
+from tweezer_picks.mcp_client import McpPhishClient
 
-logger = logging.getLogger("phish_game.locks")
+logger = logging.getLogger("tweezer_picks.locks")
 
 
 @dataclass(frozen=True)
