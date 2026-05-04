@@ -14,15 +14,13 @@ SITE_NAME=Your Site Name
 
 ### Themes
 
-The platform ships with a clean minimal default theme (`static/style.css`). To layer on a custom look, drop a CSS file into `static/` and point `THEME_FILE` at it:
+The platform ships with a clean minimal default theme (`static/style.css`). To layer on a custom look, write your own CSS and load it on top of the default. There are two ways:
 
-```
-THEME_FILE=themes/your-theme.css
-```
+**Option 1 — bundle the theme with the image (good for forks).** Drop the file into `src/setlist_stash/static/themes/your-theme.css`, set `THEME_FILE=themes/your-theme.css` in `.env`, and rebuild. The package-data glob picks up anything under `static/themes/*.css` at build time.
 
-The repo bundles one alternate theme out of the box: `themes/lot-poster.css` (Phish-fan hoodie-patch aesthetic, Honk + Anton + Special Elite typography, halftone overlays, silkscreen offsets). It's the look used on the reference deployment, [Tweezer Picks](http://192.168.86.20:3706). Set `THEME_FILE=themes/lot-poster.css` to use it.
+**Option 2 — keep the theme private to your deployment (good if your branding is yours).** Mount the CSS into the container at runtime via `docker-compose.override.yml`. See `docker-compose.override.yml.example` in the repo. Your private CSS lives outside the repo on the host machine. Compose merges the override automatically on `up`.
 
-To fully reskin, write your own CSS file and override the class hooks documented in `static/style.css`.
+The reference deployment, [Tweezer Picks](http://192.168.86.20:3706), uses option 2: its Lot Poster theme (Phish-fan hoodie-patch aesthetic) is mounted from the operator's private path. The platform repo never sees it. To rebrand for your own band/community, write your own CSS and override the class hooks documented in `static/style.css`.
 
 ## What it is
 

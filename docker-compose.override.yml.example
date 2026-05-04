@@ -1,0 +1,17 @@
+# Copy this file to docker-compose.override.yml and edit for your deployment.
+# It is gitignored so private mounts and config never leak.
+#
+# Two common patterns:
+#   1) Mount a private theme CSS into the container at runtime
+#   2) Mount custom templates that override packaged ones
+#
+# Compose loads docker-compose.override.yml automatically on `up`.
+
+services:
+  setlist-stash:
+    volumes:
+      # Mount your private theme. Set THEME_FILE=themes/<your-theme>.css in .env.
+      # The path on the right matches where the package is installed in the image.
+      - /path/to/your/private/lot-poster.css:/app/site-packages/setlist_stash/static/themes/lot-poster.css:ro
+      # Optional: override packaged templates with your own.
+      # - /path/to/your/templates/index.html:/app/site-packages/setlist_stash/templates/index.html:ro

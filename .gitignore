@@ -19,6 +19,14 @@ venv/
 .env.local
 *.local.yml
 
+# Compose override (deployment-specific; mount private themes/templates/etc here)
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# Private themes / preview drafts (drop your custom CSS here without committing)
+src/setlist_stash/static/themes/*.css
+preview.local.html
+
 # Operator-only files (never committed)
 SESSION-RESUME.md
 PROBE-NOTES.md
