@@ -31,6 +31,10 @@ RUN pip install --no-cache-dir --target /wheels --no-deps .
 # ---------------------------------------------------------------------------
 FROM python:3.13.13-slim AS runtime
 
+# Apply Debian security patches on top of the pinned base. Keeps the digest
+# pin for reproducibility while picking up CVE fixes between base rebuilds.
+RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/site-packages \
