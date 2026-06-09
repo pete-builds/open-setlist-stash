@@ -34,6 +34,11 @@ from typing import Any
 import asyncpg
 
 from setlist_stash import __version__
+from setlist_stash.completeness import (
+    evaluate_completeness,
+    read_poll_state,
+    upsert_poll_state,
+)
 from setlist_stash.config import Settings, get_settings
 from setlist_stash.db import close_pool, get_pool, init_pool
 from setlist_stash.leaderboard import rebuild_all, rebuild_leagues
@@ -45,27 +50,17 @@ from setlist_stash.mcp_client import (
     McpPhishUnavailable,
 )
 from setlist_stash.migrate import run_migrations
+from setlist_stash.resolve_types import ParsedSetlist
 from setlist_stash.scoring import score_prediction
+
+# Re-exported for backwards-compat: callers (and tests) import ParsedSetlist
+# from setlist_stash.resolve.
+__all__ = ["ParsedSetlist", "parse_setlist", "run_tick"]
 
 logger = logging.getLogger("setlist_stash.resolve")
 
 
 # ----- setlist parsing ------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ParsedSetlist:
-    """Setlist parsed into the shape the scorer wants.
-
-    Built from the ``setlist`` array returned by mcp-phish ``get_show``.
-    Each element has ``{position, set_name, song_slug, song_title, ...}``.
-    """
-
-    opener_slug: str | None
-    closer_slug: str | None
-    encore_slugs: list[str]
-    all_slugs: set[str]
-    song_count: int
 
 
 def _is_encore_set(set_name: str) -> bool:
@@ -281,6 +276,7 @@ async def _resolve_show(
     lock_row: dict[str, Any],
     *,
     cancel_after: timedelta,
+    settings: Settings,
 ) -> ShowResolveOutcome:
     """Try to resolve a single open lock.
 
@@ -288,7 +284,13 @@ async def _resolve_show(
     - If setlist is empty:
         - If lock_at is older than cancel_after, mark cancelled.
         - Otherwise leave for next tick.
-    - If setlist is present, score every prediction and stamp resolved_at.
+    - If setlist is present but NOT yet complete (no encore / track count still
+      growing, and the time backstop hasn't fired), update poll_state and skip
+      — leave the lock open for the next tick. This is the game-night gate:
+      scoring a partial setlist would mark every encore pick a miss and lock
+      that in forever.
+    - If setlist is present AND complete, score every prediction and stamp
+      resolved_at.
     """
     show_date_obj = lock_row["show_date"]
     show_date = (
@@ -333,6 +335,47 @@ async def _resolve_show(
         return ShowResolveOutcome(show_date=show_date, status="skipped")
 
     parsed = parse_setlist(setlist)
+
+    # --- completeness gate -------------------------------------------------
+    # Don't score until the setlist looks final. Fold this poll into the
+    # durable poll_state and decide. If not complete, persist state and skip;
+    # the lock stays open for the next (fast-cadence) tick.
+    prior = await read_poll_state(pool, show_date_obj)
+    decision = evaluate_completeness(
+        parsed=parsed,
+        prior=prior,
+        now=now,
+        effective_lock=effective_lock,
+        stable_polls_required=settings.resolver_stable_polls_required,
+        backstop=timedelta(hours=settings.resolver_backstop_hours),
+    )
+    await upsert_poll_state(pool, decision.next_state)
+    if not decision.complete:
+        logger.info(
+            "setlist not yet complete; skipping",
+            extra={
+                "show_date": show_date,
+                "reason": decision.reason,
+                "track_count": parsed.song_count,
+                "encore_seen": decision.next_state.encore_seen,
+                "stable_polls": decision.next_state.stable_polls,
+            },
+        )
+        return ShowResolveOutcome(
+            show_date=show_date,
+            status="skipped",
+            setlist_song_count=parsed.song_count,
+        )
+    logger.info(
+        "setlist complete; scoring",
+        extra={
+            "show_date": show_date,
+            "reason": decision.reason,
+            "track_count": parsed.song_count,
+            "stable_polls": decision.next_state.stable_polls,
+        },
+    )
+
     predictions = await _predictions_for_show(pool, show_date_obj)
 
     # Build the union of slugs we need song meta for: bag picks + slot picks
@@ -442,6 +485,38 @@ class TickResult:
     shows_resolved: int
     predictions_scored: int
     summary: dict[str, Any]
+    # Recommended seconds to sleep before the next tick. Fast cadence while an
+    # open unresolved lock has an active show window; coarse otherwise. The
+    # loop honors this; single-tick callers ignore it.
+    next_interval_seconds: int = 0
+
+
+def _has_active_window(
+    open_locks: list[dict[str, Any]], settings: Settings, now: datetime
+) -> bool:
+    """True if any open lock's show window is currently active.
+
+    A show window is active from the effective lock until
+    ``resolver_active_window_hours`` after it — the span during which a live
+    setlist is being typed in and the fast poll cadence is warranted.
+    """
+    window = timedelta(hours=settings.resolver_active_window_hours)
+    for lock_row in open_locks:
+        effective_lock = lock_row.get("lock_at_override") or lock_row["lock_at"]
+        if effective_lock.tzinfo is None:
+            effective_lock = effective_lock.replace(tzinfo=UTC)
+        if effective_lock <= now < effective_lock + window:
+            return True
+    return False
+
+
+def _next_interval(
+    open_locks: list[dict[str, Any]], settings: Settings, now: datetime
+) -> int:
+    """Pick the next sleep interval: fast if a show window is active."""
+    if _has_active_window(open_locks, settings, now):
+        return settings.resolver_active_interval_seconds
+    return settings.resolver_interval_seconds
 
 
 async def run_tick(settings: Settings) -> TickResult:
@@ -455,9 +530,11 @@ async def run_tick(settings: Settings) -> TickResult:
     shows_resolved = 0
     predictions_scored = 0
     encountered_error = False
+    now = datetime.now(UTC)
 
     try:
         open_locks = await _open_locks(pool)
+        next_interval = _next_interval(open_locks, settings, now)
         if not open_locks:
             await _finish_run(
                 pool, run_id,
@@ -467,7 +544,10 @@ async def run_tick(settings: Settings) -> TickResult:
                 predictions_scored=0,
                 summary={"shows": [], "note": "no open locks"},
             )
-            return TickResult("noop", 0, 0, 0, {"shows": [], "note": "no open locks"})
+            return TickResult(
+                "noop", 0, 0, 0, {"shows": [], "note": "no open locks"},
+                next_interval_seconds=next_interval,
+            )
 
         async with McpPhishClient(
             settings.mcp_phish_url,
@@ -481,7 +561,9 @@ async def run_tick(settings: Settings) -> TickResult:
                 )
                 try:
                     outcome = await _resolve_show(
-                        pool, mcp, lock_row, cancel_after=cancel_after
+                        pool, mcp, lock_row,
+                        cancel_after=cancel_after,
+                        settings=settings,
                     )
                 except McpPhishUnavailable as exc:
                     encountered_error = True
@@ -560,6 +642,7 @@ async def run_tick(settings: Settings) -> TickResult:
             shows_resolved=shows_resolved,
             predictions_scored=predictions_scored,
             summary=summary,
+            next_interval_seconds=next_interval,
         )
     except Exception as exc:
         logger.exception("resolver tick failed")
@@ -604,7 +687,7 @@ async def _bootstrap(settings: Settings) -> None:
     await run_migrations(pool)
 
 
-async def _amain(loop: bool, interval_seconds: int) -> int:
+async def _amain(loop: bool, interval_override: int | None) -> int:
     settings = get_settings()
     configure_logging(settings.log_format)
     await _bootstrap(settings)
@@ -624,9 +707,19 @@ async def _amain(loop: bool, interval_seconds: int) -> int:
 
         logger.info(
             "resolver loop starting",
-            extra={"interval_seconds": interval_seconds, "version": __version__},
+            extra={
+                "interval_override": interval_override,
+                "coarse_interval_seconds": settings.resolver_interval_seconds,
+                "active_interval_seconds": settings.resolver_active_interval_seconds,
+                "version": __version__,
+            },
         )
         while True:
+            # Default to the coarse interval; each tick recommends a cadence
+            # (fast while a show window is active). An explicit
+            # --interval-seconds override pins the interval and disables the
+            # show-day-aware cadence.
+            sleep_for = settings.resolver_interval_seconds
             try:
                 result = await run_tick(settings)
                 logger.info(
@@ -636,13 +729,18 @@ async def _amain(loop: bool, interval_seconds: int) -> int:
                         "shows_scanned": result.shows_scanned,
                         "shows_resolved": result.shows_resolved,
                         "predictions_scored": result.predictions_scored,
+                        "next_interval_seconds": result.next_interval_seconds,
                     },
                 )
+                if result.next_interval_seconds > 0:
+                    sleep_for = result.next_interval_seconds
             except Exception:
                 # Already logged by run_tick. Don't crash the loop on a
                 # transient error — the next tick will retry.
                 logger.exception("tick raised; continuing loop")
-            await asyncio.sleep(interval_seconds)
+            if interval_override is not None:
+                sleep_for = interval_override
+            await asyncio.sleep(sleep_for)
     finally:
         await close_pool()
 
@@ -662,13 +760,16 @@ def main() -> None:
         "--interval-seconds",
         type=int,
         default=None,
-        help="Override RESOLVER_INTERVAL_SECONDS (only used with --loop).",
+        help=(
+            "Pin the loop interval (only used with --loop). When omitted, the "
+            "resolver uses show-day-aware cadence: fast "
+            "(RESOLVER_ACTIVE_INTERVAL_SECONDS) while a show window is active, "
+            "coarse (RESOLVER_INTERVAL_SECONDS) otherwise."
+        ),
     )
     args = parser.parse_args()
 
-    settings = get_settings()
-    interval = args.interval_seconds or settings.resolver_interval_seconds
-    rc = asyncio.run(_amain(loop=args.loop, interval_seconds=interval))
+    rc = asyncio.run(_amain(loop=args.loop, interval_override=args.interval_seconds))
     sys.exit(rc)
 
 

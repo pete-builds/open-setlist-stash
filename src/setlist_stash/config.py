@@ -60,6 +60,29 @@ class Settings(BaseSettings):
     # below 24h: phish.net's setlist publish can lag, especially overnight.
     resolver_cancel_after_hours: int = Field(default=72, ge=24)
 
+    # --- Setlist-completeness gate (game-night scoring) ---
+    # phish.net setlists are typed in live DURING the show and grow set by set,
+    # encore entered last. Scoring on the first non-empty setlist would score
+    # everyone's encore pick against the end of Set 1 and lock those wrong
+    # scores in forever. The resolver therefore scores a show ONLY when its
+    # setlist looks final. A setlist is COMPLETE when an encore is detected AND
+    # the track count has held steady across this many consecutive polls...
+    resolver_stable_polls_required: int = Field(default=6, ge=1)
+    # ...OR this many hours have elapsed since the effective lock (time
+    # backstop). A Phish show is ~3h and the setlist settles well within this,
+    # so 6h guarantees eventual scoring even if the stability signal never
+    # converges (e.g. phish.net edits trickle for days).
+    resolver_backstop_hours: int = Field(default=6, ge=1)
+    # Fast poll cadence used while an open unresolved lock has an active show
+    # window (between effective lock and lock + backstop). Default 5 min,
+    # matching the phish-vault active-poll cadence so stable-poll math lines up
+    # (6 stable polls * 5 min = 30 min of no new tracks).
+    resolver_active_interval_seconds: int = Field(default=300, ge=30)
+    # How long after the effective lock the show window stays "active" for the
+    # fast cadence. Defaults to the backstop so the coarse interval resumes
+    # once the backstop would have fired anyway.
+    resolver_active_window_hours: int = Field(default=6, ge=1)
+
     # --- Session / handle ---
     session_secret: SecretStr = Field(default=SecretStr("dev-only-do-not-use-in-prod"))
 
