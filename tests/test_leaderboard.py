@@ -459,11 +459,19 @@ async def test_resolver_tick_rebuilds_leaderboard(
 
     monkeypatch.setattr(resolve, "McpPhishClient", lambda *a, **kw: _FakeMcpForLeaderboard())
 
+    # stable_polls_required=1 so a single tick on this complete (encore-bearing)
+    # setlist satisfies the completeness gate's stability clause immediately.
+    # Without it the gate falls back to the time backstop
+    # (effective_lock + resolver_backstop_hours), which makes the resolve
+    # outcome depend on the wall-clock gap between the back-dated lock and now
+    # — i.e. non-deterministic by time of day. Mirrors test_resolve.py's
+    # _make_settings(stable_polls_required=1).
     settings = Settings(
         mcp_phish_url="http://test/mcp",
         mcp_phish_timeout_seconds=2.0,
         resolver_cancel_after_hours=72,
         resolver_interval_seconds=60,
+        resolver_stable_polls_required=1,
     )
     result = await resolve.run_tick(settings)
     assert result.status == "success"
