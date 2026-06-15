@@ -33,7 +33,11 @@ FROM python:3.13.14-slim AS runtime
 
 # Apply Debian security patches on top of the pinned base. Keeps the digest
 # pin for reproducibility while picking up CVE fixes between base rebuilds.
-RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
+# CACHE_BUST is referenced inside the RUN so BuildKit's gha cache (cache-from/
+# cache-to: type=gha in CI) cannot replay a stale apt layer that predates the
+# latest Debian security fixes. Bump the date to force a fresh apt upgrade.
+ARG CACHE_BUST=2026-06-15
+RUN echo "cache-bust: ${CACHE_BUST}" && apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
