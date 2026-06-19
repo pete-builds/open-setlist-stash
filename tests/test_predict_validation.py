@@ -141,7 +141,7 @@ async def test_post_with_bogus_slug_rejected_no_row_written(
     assert "blarghhh" in resp.text.lower()
     # Apostrophe is HTML-escaped in Jinja autoescape, so check the
     # un-apostrophe substring of the error message.
-    assert "real phish songs" in resp.text.lower()
+    assert "real songs" in resp.text.lower()
 
     async with pg_pool.acquire() as conn:
         count = await conn.fetchval(

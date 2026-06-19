@@ -1,6 +1,7 @@
-"""setlist-stash: Setlist prediction game for Phish shows.
+"""setlist-stash: an open-source setlist prediction game.
 
-Phase 4 of the Phish Data Platform. See PHASE-4-PLAN.md for design.
+Band-agnostic: brand a deployment via the SITE_NAME env var and point it at any
+setlist MCP server. See PHASE-4-PLAN.md for design.
 """
 
 __version__ = "0.2.0"

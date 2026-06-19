@@ -150,10 +150,7 @@ def build_app(
     app = FastAPI(
         title="setlist-stash",
         version=__version__,
-        description=(
-            "Setlist prediction game for Phish shows. "
-            "Phase 4 of the Phish Data Platform."
-        ),
+        description="Open-source setlist prediction game.",
         lifespan=lifespan,
     )
 
@@ -397,7 +394,7 @@ def build_app(
                     seen.add(s)
                     unique_bad.append(s)
             error_msg = (
-                "These picks aren't real Phish songs in the database: "
+                "These picks aren't real songs in the database: "
                 + ", ".join(unique_bad)
                 + ". Pick from the autocomplete suggestions."
             )

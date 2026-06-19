@@ -57,7 +57,7 @@
                    id="{{ slot }}_title"
                    class="song-picker-title"
                    value="{{ initial }}"
-                   placeholder="e.g. tweezer"
+                   placeholder="start typing a song…"
                    list="songs-list-{{ slot }}"
                    hx-get="/songs/search"
                    hx-trigger="input changed delay:200ms, focus"
@@ -105,7 +105,7 @@
       <button type="submit" class="btn" id="predict-submit-btn">Submit prediction</button>
       <p class="muted">
         Pick from the autocomplete suggestions. Free-text entries that don't
-        match a Phish song will be rejected. Gap, last-played, and rarity
+        match a known song will be rejected. Gap, last-played, and rarity
         stats unlock after lock_at to keep the contest fair.
       </p>
     </form>
