@@ -374,6 +374,62 @@ button[disabled],
   font-size: 1rem;
 }
 
+/* ---- beta notice (home page, deployment-driven via BETA_NOTICE) ---- */
+
+.beta-notice {
+  display: block;
+  max-width: 34rem;
+  margin: 0 auto 1.6rem;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.88rem;
+  color: var(--text-soft);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.beta-notice .badge {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0.05rem 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  vertical-align: 0.05em;
+}
+
+/* ---- next-show countdown widget (home page) ---- */
+
+.next-show {
+  max-width: 34rem;
+  margin: 0 auto 1.8rem;
+  padding: 0.9rem 1.1rem;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.next-show p { margin: 0.2rem 0; }
+.next-show-where { color: var(--text); font-size: 0.98rem; }
+.next-show-lock {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.9rem;
+  color: var(--text-soft);
+}
+#home-lock-countdown {
+  font-weight: 600;
+  color: var(--accent-deep);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .beta-notice, .next-show { max-width: 100%; }
+}
+
 /* ---- song picker ---- */
 
 .song-picker {

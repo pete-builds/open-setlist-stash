@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # third-party self-host stay clean. Never bake a real ID into the repo —
     # set it per deployment via the ANALYTICS_ID env var (oss-platform-split).
     analytics_id: str = Field(default="")
+    # Optional beta notice rendered as a small banner on the home page only.
+    # Deployment-level override (oss-platform-split): when set, the home hero
+    # shows the text in a subtle ``.beta-notice`` banner; when empty (the
+    # default) NOTHING renders, so the OSS image and any third-party self-host
+    # (and the Phish demo) stay clean. Edit/clear it per deployment via the
+    # BETA_NOTICE env var with no rebuild.
+    beta_notice: str = Field(default="")
     # Directory the blog engine reads ``*.md`` posts from. Deployment-specific:
     # the content is NOT in the image, it's bind-mounted here per deployment
     # (same pattern as THEME_FILE). With nothing mounted the dir is missing,

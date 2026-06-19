@@ -190,6 +190,10 @@ def build_app(
     # the OSS image / third-party self-host stay clean. Set per deployment via
     # the ANALYTICS_ID env var; base.html guards the gtag snippet on it.
     templates.env.globals["analytics_id"] = cfg.analytics_id
+    # Optional beta notice. Empty (default) renders no banner at all, so the
+    # OSS image / Phish demo / third-party self-host stay clean. Set per
+    # deployment via the BETA_NOTICE env var; index.html guards it on truthiness.
+    templates.env.globals["beta_notice"] = cfg.beta_notice
     # Whether the email/magic-link signup UI should render at all. Off when the
     # provider is disabled (default), so the email entry points disappear for
     # any deployment without email configured.
@@ -256,22 +260,35 @@ def build_app(
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         user = await _resolve_user(request)
+        # Resolve the upcoming show for everyone (not just signed-in users) so
+        # the home-page countdown widget renders for anonymous visitors too.
         upcoming = None
-        if user is not None:
+        try:
+            async with McpPhishClient(
+                cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
+            ) as mcp:
+                upcoming = await select_form_show(cfg, mcp)
+        except McpPhishError:
+            logger.warning("mcp-phish unreachable on /; rendering without show")
+            upcoming = None
+        # Lock for the upcoming show, so the hero countdown has a target. Same
+        # _format_lock shape the predict page consumes (lock_at_iso + display +
+        # is_locked). Needs the DB pool; skip gracefully if it isn't up.
+        upcoming_lock = None
+        if upcoming is not None:
             try:
-                async with McpPhishClient(
-                    cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
-                ) as mcp:
-                    upcoming = await select_form_show(cfg, mcp)
-            except McpPhishError:
-                logger.warning("mcp-phish unreachable on /; rendering without show")
-                upcoming = None
+                pool = get_pool()
+                lock = await get_or_create_lock(pool, upcoming, cfg)
+                upcoming_lock = _format_lock(lock, cfg)
+            except RuntimeError:
+                upcoming_lock = None
         return _render(
             request,
             "index.html",
             current_user=user,
             handle_help=HANDLE_HELP,
             upcoming_show=upcoming,
+            upcoming_lock=upcoming_lock,
         )
 
     @app.post("/handle")
