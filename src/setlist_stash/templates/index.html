@@ -50,4 +50,34 @@
       <a href="/auth/login">Sign in by email</a>.
     </p>
   {% endif %}
+
+  <section class="card" id="how-it-works" style="margin-top:1.5rem;">
+    <h2>How it works</h2>
+    <p>
+      <strong>{{ site_name }}</strong> is a free setlist-prediction game. Before a
+      show starts, you guess what the band will play. After the show, your picks
+      are scored against the real setlist and you climb the leaderboard — on your
+      own or in a private league with friends.
+    </p>
+
+    <h3>Making picks</h3>
+    <ul>
+      <li><strong>Three song picks:</strong> any songs you think turn up anywhere in the setlist.</li>
+      <li><strong>Optional slot calls:</strong> name the show's opener, closer, and encore.</li>
+      <li>Picks lock at showtime and can't be changed once the show starts.</li>
+    </ul>
+
+    <h3>How scoring works</h3>
+    <ul>
+      <li>
+        <strong>Rarity points</strong> for each song pick that gets played: the
+        longer it's been since the song was last played (its <em>gap</em>) and the
+        fewer times it's ever been played, the more it's worth. A long-overdue
+        bustout pays far more than a nightly staple.
+      </li>
+      <li><strong>A pick that doesn't get played scores 0.</strong> Your total is the sum of everything you hit.</li>
+      <li><strong>Slot bonuses</strong> when you nail a call: <strong>+25</strong> opener, <strong>+25</strong> closer, <strong>+30</strong> encore.</li>
+      <li>Gap and play-count stats stay hidden until picks lock, so everyone guesses blind.</li>
+    </ul>
+  </section>
 {% endblock %}

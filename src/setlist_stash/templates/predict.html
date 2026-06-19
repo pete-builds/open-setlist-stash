@@ -40,6 +40,12 @@
     {% if error %}
       <p class="error">{{ error }}</p>
     {% endif %}
+    <p class="muted">
+      Pick three songs (any set), then optionally call the opener, closer, and
+      encore. Songs that get played earn rarity points — the more overdue and
+      rarely-played, the more they're worth — plus <strong>+25/+25/+30</strong>
+      for nailing the opener/closer/encore. <a href="/#how-it-works">How scoring works →</a>
+    </p>
     <form method="post" action="/predict/{{ show.show_date }}" id="predict-form" novalidate>
       <fieldset>
         <legend>Three songs (any set)</legend>
