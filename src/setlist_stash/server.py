@@ -107,7 +107,7 @@ def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
     local = lock.lock_at.astimezone(tz)
     return {
         "is_locked": lock.is_locked,
-        "lock_at_display": local.strftime("%Y-%m-%d %H:%M %Z"),
+        "lock_at_display": local.strftime("%a %b %-d, %-I:%M %p %Z"),
         # ISO-8601 with timezone, parseable by JS ``new Date()``. Used by
         # the predict-page countdown and post-lock panels.
         "lock_at_iso": lock.lock_at.isoformat(),
