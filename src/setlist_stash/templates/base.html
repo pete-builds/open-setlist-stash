@@ -64,5 +64,85 @@
       {% endif %}
     </small>
   </footer>
+  <script>
+    // Shared share/copy helper. Vanilla JS, no deps. Exposed as a global so
+    // any page (predict, show, league invite) can wire a button to it.
+    //
+    // Robustness chain (each step wrapped so a click NEVER does nothing):
+    //   1. navigator.share  -> native OS share sheet (mobile / supported
+    //      desktop). User-cancel is swallowed so it doesn't throw to console.
+    //      If sharing is unavailable OR the user cancels, we fall through to
+    //      copy so there is always a useful result.
+    //   2. navigator.clipboard.writeText -> async copy (needs a SECURE context;
+    //      works on https://www.wappypicks.com, NOT on bare-LAN http://).
+    //   3. hidden <textarea> + document.execCommand('copy') -> legacy copy that
+    //      works on http:// LAN / older browsers (covers the dev case).
+    //   4. last resort: select the URL on screen so the user can copy by hand.
+    // Every branch surfaces visible feedback via the button label.
+    window.ossShare = (function () {
+      function flashLabel(btn, msg, ms) {
+        if (!btn._ossDefaultLabel) { btn._ossDefaultLabel = btn.textContent; }
+        btn.textContent = msg;
+        clearTimeout(btn._ossFlashTimer);
+        btn._ossFlashTimer = setTimeout(function () {
+          btn.textContent = btn._ossDefaultLabel;
+        }, ms || 2000);
+      }
+
+      function legacyCopy(url) {
+        // hidden textarea + execCommand for non-secure contexts / old browsers
+        try {
+          var ta = document.createElement('textarea');
+          ta.value = url;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.top = '-1000px';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          ta.setSelectionRange(0, ta.value.length);
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+          document.body.removeChild(ta);
+          return ok;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function copy(url, btn) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(
+            function () { flashLabel(btn, 'Link copied!'); },
+            function () {
+              if (legacyCopy(url)) { flashLabel(btn, 'Link copied!'); }
+              else { flashLabel(btn, 'Copy this: ' + url, 6000); }
+            }
+          );
+          return;
+        }
+        if (legacyCopy(url)) { flashLabel(btn, 'Link copied!'); return; }
+        flashLabel(btn, 'Copy this: ' + url, 6000);
+      }
+
+      // Public entry point. opts = { url, title, text }.
+      return function ossShare(btn, opts) {
+        var url = opts.url;
+        var title = opts.title || document.title;
+        var text = opts.text || '';
+        if (navigator.share) {
+          try {
+            navigator.share({ title: title, text: text, url: url })
+              .catch(function () { copy(url, btn); });
+            return;
+          } catch (e) {
+            // synchronous throw (unsupported field, etc.) -> fall through
+          }
+        }
+        copy(url, btn);
+      };
+    })();
+  </script>
 </body>
 </html>

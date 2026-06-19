@@ -32,7 +32,27 @@
       Share this URL with friends. Anyone with the link can join (up to
       {{ league.member_cap }} members).
     </p>
-    <p><code>{{ invite_url }}</code></p>
+    <p><code id="invite-url">{{ invite_url }}</code></p>
+    <p>
+      <button type="button" class="btn" id="invite-copy-btn"
+              data-share-url="{{ invite_url }}"
+              data-share-title="Join my league: {{ league.name }}"
+              data-share-text="Join my setlist-picks league on {{ site_name }}.">Copy invite link</button>
+    </p>
+    <script>
+      // Copy / share the league invite link. Uses the shared ossShare helper.
+      (function () {
+        var btn = document.getElementById('invite-copy-btn');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+          window.ossShare(btn, {
+            url: btn.dataset.shareUrl,
+            title: btn.dataset.shareTitle,
+            text: btn.dataset.shareText
+          });
+        });
+      })();
+    </script>
     {% if is_host %}
       <p class="muted">
         Need a fresh URL? <a href="/league/{{ league.slug }}/settings">Rotate the slug</a>

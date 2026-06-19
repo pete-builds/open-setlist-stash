@@ -14,7 +14,7 @@
     <p>
       <button type="button" class="btn" id="share-btn"
               data-share-title="Make your picks: {{ show.venue_name or show.show_date }}"
-              data-share-text="Make your picks for {% if show.venue_name %}{{ show.venue_name }} {% endif %}{{ show.show_date }} — picks lock at {{ lock.lock_at_display }}">Share</button>
+              data-share-text="Make your picks for {% if show.venue_name %}{{ show.venue_name }} {% endif %}{{ show.show_date }}: picks lock at {{ lock.lock_at_display }}">Share / Copy link</button>
     </p>
   {% endif %}
 
@@ -353,33 +353,17 @@
     </script>
 
     <script>
-      // Share button. Native share sheet on phones (iMessage/SMS/etc.),
-      // clipboard fallback on desktop. Vanilla JS, no deps.
+      // Share this predict page. Uses the shared ossShare helper (base.html):
+      // native share sheet on phones, clipboard/execCommand copy on desktop.
       (function () {
         var btn = document.getElementById('share-btn');
         if (!btn) return;
-        var url = window.location.href;
-        var title = btn.dataset.shareTitle || document.title;
-        var text = btn.dataset.shareText || '';
-        var defaultLabel = btn.textContent;
-        function flash(msg) {
-          btn.textContent = msg;
-          setTimeout(function () { btn.textContent = defaultLabel; }, 1500);
-        }
         btn.addEventListener('click', function () {
-          if (navigator.share) {
-            navigator.share({ title: title, text: text, url: url })
-              .catch(function () { /* user cancelled; ignore */ });
-            return;
-          }
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(url).then(
-              function () { flash('Link copied'); },
-              function () { flash('Copy failed'); }
-            );
-            return;
-          }
-          flash('Copy this URL: ' + url);
+          window.ossShare(btn, {
+            url: window.location.href,
+            title: btn.dataset.shareTitle,
+            text: btn.dataset.shareText
+          });
         });
       })();
     </script>
