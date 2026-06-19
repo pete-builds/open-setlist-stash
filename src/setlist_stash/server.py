@@ -265,6 +265,12 @@ def build_app(
                 extra={"show_date": str(show_date)},
             )
 
+        # Operator-set target show: prefer its venue/location. An upcoming show
+        # can sit outside the recent_shows window, so the scan above may miss it.
+        if cfg.admin_show_date and show_date == cfg.admin_show_date:
+            venue_name = cfg.admin_show_venue or venue_name
+            location = cfg.admin_show_location or location
+
         show: dict[str, Any] = {
             "show_date": show_date,
             "show_id": show_id,
