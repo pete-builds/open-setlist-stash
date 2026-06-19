@@ -62,13 +62,13 @@
              re-submit can't replay the same bogus pick. #}
           {% set is_required = (i == 1) %}
           <div class="song-picker{% if not is_required %} song-picker-optional{% endif %}{% if is_bad %} song-picker-bad{% endif %}" data-slot="{{ slot }}">
-            <label for="{{ slot }}_title">Pick {{ i }}{% if not is_required %} (optional){% endif %}{% if is_bad %} <span class="error">(not a real song)</span>{% endif %}</label>
+            <label for="{{ slot }}_title">Pick {{ i }}{% if is_bad %} <span class="error">(not a real song)</span>{% endif %}</label>
             <input type="text"
                    id="{{ slot }}_title"
                    class="song-picker-title"
                    name="q"
                    value="{{ initial }}"
-                   placeholder="{{ 'start typing a song…' if is_required else 'optional' }}"
+                   placeholder="start typing a song…"
                    list="songs-list-{{ slot }}"
                    hx-get="/songs/search"
                    hx-trigger="input changed delay:200ms, focus"
@@ -93,8 +93,8 @@
       <button type="submit" class="btn" id="predict-submit-btn">Submit prediction</button>
       <p class="muted">
         Pick from the autocomplete suggestions. Free-text entries that don't
-        match a known song will be rejected. Pick 1 is required; the rest are
-        optional. Tap one pick's ⭐ as your encore call.
+        match a known song will be rejected. Pick 1 is required; add up to 4
+        more. Tap one pick's ⭐ as your encore call.
       </p>
     </form>
   {% endif %}
@@ -216,7 +216,6 @@
           var hint = picker.querySelector('.picker-hint');
           var datalistId = titleInput.getAttribute('list');
           var datalist = document.getElementById(datalistId);
-          var isOptional = picker.classList.contains('song-picker-optional');
 
           // Input event: try to lock in the slug as soon as the typed value
           // matches an option (handles native datalist click on Chrome/Edge,
@@ -252,9 +251,7 @@
             // but clear the slug so the form payload doesn't ship "blarghhh".
             clearPicker(picker);
             if (hint) {
-              hint.textContent = isOptional
-                ? "Optional. Leave empty or pick a song from the list."
-                : "Pick a song from the list.";
+              hint.textContent = "Pick a song from the list.";
             }
           });
 
