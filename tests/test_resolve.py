@@ -63,7 +63,7 @@ class _FakeMcpPhishClient:
 
 
 class _CountingMcpPhishClient(_FakeMcpPhishClient):
-    """A fake that counts how many times it scored (via get_song calls).
+    """A fake that counts how many times a show was fetched (get_show calls).
 
     Used to assert a complete setlist is scored exactly once: re-running the
     tick after a resolve must be a no-op (the lock is resolved), so get_show
@@ -228,9 +228,13 @@ async def test_run_tick_scores_published_setlist(
     assert pred["score"] > 0  # all three picks played + every slot bonus
     breakdown = json.loads(pred["score_breakdown"])
     assert set(breakdown.keys()) == {"picks", "opener", "closer", "encore", "total"}
-    assert breakdown["opener"]["bonus"] == 25
-    assert breakdown["closer"]["bonus"] == 25
-    assert breakdown["encore"]["bonus"] == 30
+    assert breakdown["opener"]["bonus"] == 5
+    assert breakdown["closer"]["bonus"] == 5
+    assert breakdown["encore"]["bonus"] == 3
+    # 3 played picks (2 each) + opener(5) + closer(5) + encore(3) = 19.
+    assert all(p["points"] == 2 for p in breakdown["picks"])
+    assert breakdown["total"] == 19
+    assert pred["score"] == 19
 
     assert lock is not None
     assert lock["resolved_at"] is not None

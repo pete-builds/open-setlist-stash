@@ -11,6 +11,11 @@
       Locks at <strong>{{ lock.lock_at_display }}</strong>
       (<span id="lock-countdown" data-lock-at="{{ lock.lock_at_iso }}">{{ lock.seconds_until_lock }}s</span> from now).
     </p>
+    <p>
+      <button type="button" class="btn" id="share-btn"
+              data-share-title="Make your picks: {{ show.venue_name or show.show_date }}"
+              data-share-text="Make your picks for {% if show.venue_name %}{{ show.venue_name }} {% endif %}{{ show.show_date }} — picks lock at {{ lock.lock_at_display }}">Share</button>
+    </p>
   {% endif %}
 
   {% if existing %}
@@ -41,15 +46,14 @@
       <p class="error">{{ error }}</p>
     {% endif %}
     <p class="muted">
-      Pick three songs (any set), then optionally call the opener, closer, and
-      encore. Songs that get played earn rarity points — the more overdue and
-      rarely-played, the more they're worth — plus <strong>+25/+25/+30</strong>
-      for nailing the opener/closer/encore. <a href="/#how-it-works">How scoring works →</a>
+      Pick up to 5 songs (any set) at 2 points each, then optionally call the
+      opener (+5), closer (+5), and encore (+3).
+      <a href="/#how-it-works">How scoring works →</a>
     </p>
     <form method="post" action="/predict/{{ show.show_date }}" id="predict-form" novalidate>
       <fieldset>
-        <legend>Three songs (any set)</legend>
-        {% for i in [1, 2, 3] %}
+        <legend>Up to five songs (any set)</legend>
+        {% for i in [1, 2, 3, 4, 5] %}
           {% set slot = 'pick_' ~ i %}
           {% set initial = form_values.get(slot, '') if form_values else '' %}
           {% set is_bad = initial and initial in bad_slugs %}
@@ -57,14 +61,15 @@
              slug ONLY ships if the slot survived validation (i.e. is not
              bad). For a bad slot, the hidden slug is empty so a JS-off
              re-submit can't replay the same bogus pick. #}
-          <div class="song-picker{% if is_bad %} song-picker-bad{% endif %}" data-slot="{{ slot }}">
-            <label for="{{ slot }}_title">Pick {{ i }}{% if is_bad %} <span class="error">(not a real song)</span>{% endif %}</label>
+          {% set is_required = (i == 1) %}
+          <div class="song-picker{% if not is_required %} song-picker-optional{% endif %}{% if is_bad %} song-picker-bad{% endif %}" data-slot="{{ slot }}">
+            <label for="{{ slot }}_title">Pick {{ i }}{% if not is_required %} (optional){% endif %}{% if is_bad %} <span class="error">(not a real song)</span>{% endif %}</label>
             <input type="text"
                    id="{{ slot }}_title"
                    class="song-picker-title"
                    name="q"
                    value="{{ initial }}"
-                   placeholder="start typing a song…"
+                   placeholder="{{ 'start typing a song…' if is_required else 'optional' }}"
                    list="songs-list-{{ slot }}"
                    hx-get="/songs/search"
                    hx-trigger="input changed delay:200ms, focus"
@@ -73,7 +78,7 @@
                    hx-include="this"
                    hx-params="q"
                    autocomplete="off"
-                   required>
+                   {% if is_required %}required{% endif %}>
             <datalist id="songs-list-{{ slot }}"></datalist>
             <input type="hidden" name="{{ slot }}" id="{{ slot }}" class="song-picker-slug" value="{{ '' if is_bad else initial }}">
             <p class="picker-hint muted" data-for="{{ slot }}"></p>
@@ -113,8 +118,8 @@
       <button type="submit" class="btn" id="predict-submit-btn">Submit prediction</button>
       <p class="muted">
         Pick from the autocomplete suggestions. Free-text entries that don't
-        match a known song will be rejected. Gap, last-played, and rarity
-        stats unlock after lock_at to keep the contest fair.
+        match a known song will be rejected. Pick 1 is required; the rest are
+        optional.
       </p>
     </form>
   {% endif %}
@@ -132,10 +137,10 @@
       // visible input value matches a slug OR title in the current datalist.
       // On blur without a match, we clear the hidden slug and show a hint.
       //
-      // The submit button is disabled until all 3 required pickers (pick_1,
-      // pick_2, pick_3) have non-empty hidden slugs.
+      // The submit button is disabled until the one required picker (pick_1)
+      // has a non-empty hidden slug. Picks 2-5 are optional.
       (function () {
-        var REQUIRED_SLOTS = ['pick_1', 'pick_2', 'pick_3'];
+        var REQUIRED_SLOTS = ['pick_1'];
 
         function pickers() {
           return Array.prototype.slice.call(document.querySelectorAll('.song-picker'));
@@ -313,6 +318,38 @@
         }
         tick();
         setInterval(tick, 1000);
+      })();
+    </script>
+
+    <script>
+      // Share button. Native share sheet on phones (iMessage/SMS/etc.),
+      // clipboard fallback on desktop. Vanilla JS, no deps.
+      (function () {
+        var btn = document.getElementById('share-btn');
+        if (!btn) return;
+        var url = window.location.href;
+        var title = btn.dataset.shareTitle || document.title;
+        var text = btn.dataset.shareText || '';
+        var defaultLabel = btn.textContent;
+        function flash(msg) {
+          btn.textContent = msg;
+          setTimeout(function () { btn.textContent = defaultLabel; }, 1500);
+        }
+        btn.addEventListener('click', function () {
+          if (navigator.share) {
+            navigator.share({ title: title, text: text, url: url })
+              .catch(function () { /* user cancelled; ignore */ });
+            return;
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(
+              function () { flash('Link copied'); },
+              function () { flash('Copy failed'); }
+            );
+            return;
+          }
+          flash('Copy this URL: ' + url);
+        });
       })();
     </script>
   {% endif %}

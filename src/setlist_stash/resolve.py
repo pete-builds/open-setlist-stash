@@ -246,30 +246,6 @@ async def _predictions_for_show(
     return [dict(r) for r in rows]
 
 
-async def _fetch_song_meta(
-    mcp: McpPhishClient, slugs: set[str]
-) -> dict[str, dict[str, Any]]:
-    """Fetch ``gap_current`` + ``times_played`` for each slug.
-
-    Per-tick cache: each unique slug is fetched once. Slugs that 404 (unknown
-    in the vault) get a zero-meta record so scoring still produces base=0
-    cleanly without crashing the run.
-    """
-    out: dict[str, dict[str, Any]] = {}
-    for slug in sorted(slugs):
-        try:
-            row = await mcp.get_song(slug)
-        except McpPhishNotFound:
-            logger.warning("get_song not found", extra={"slug": slug})
-            out[slug] = {"gap_current": 0, "times_played": 0}
-            continue
-        out[slug] = {
-            "gap_current": int(row.get("gap_current") or row.get("gap") or 0),
-            "times_played": int(row.get("times_played") or 0),
-        }
-    return out
-
-
 async def _resolve_show(
     pool: asyncpg.Pool[Any],
     mcp: McpPhishClient,
@@ -378,17 +354,6 @@ async def _resolve_show(
 
     predictions = await _predictions_for_show(pool, show_date_obj)
 
-    # Build the union of slugs we need song meta for: bag picks + slot picks
-    # that ended up "played" (slot bonuses don't need song_meta, but if a
-    # slot pick is also in the bag, we still need its meta).
-    needed_slugs: set[str] = set()
-    for pred in predictions:
-        for slug in pred["pick_song_slugs"]:
-            if slug in parsed.all_slugs:
-                needed_slugs.add(str(slug))
-
-    song_meta = await _fetch_song_meta(mcp, needed_slugs)
-
     scored_count = 0
     async with pool.acquire() as conn, conn.transaction():
         for pred in predictions:
@@ -401,7 +366,6 @@ async def _resolve_show(
                 actual_closer=parsed.closer_slug,
                 actual_encore_slugs=parsed.encore_slugs,
                 setlist_slugs=parsed.all_slugs,
-                song_meta=song_meta,
             )
             await conn.execute(
                 """

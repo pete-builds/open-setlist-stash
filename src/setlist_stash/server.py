@@ -301,8 +301,10 @@ def build_app(
         request: Request,
         show_date: date,
         pick_1: str = Form(...),
-        pick_2: str = Form(...),
-        pick_3: str = Form(...),
+        pick_2: str = Form(""),
+        pick_3: str = Form(""),
+        pick_4: str = Form(""),
+        pick_5: str = Form(""),
         opener_slug: str = Form(""),
         closer_slug: str = Form(""),
         encore_slug: str = Form(""),
@@ -312,6 +314,8 @@ def build_app(
             return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
         pool = get_pool()
 
+        raw_picks = [pick_1, pick_2, pick_3, pick_4, pick_5]
+
         # Capture raw values up-front so any error path can re-render the
         # form with the user's existing picks intact (including invalid
         # ones, so they can see what to fix).
@@ -319,13 +323,15 @@ def build_app(
             "pick_1": pick_1.strip().lower(),
             "pick_2": pick_2.strip().lower(),
             "pick_3": pick_3.strip().lower(),
+            "pick_4": pick_4.strip().lower(),
+            "pick_5": pick_5.strip().lower(),
             "opener_slug": opener_slug.strip().lower(),
             "closer_slug": closer_slug.strip().lower(),
             "encore_slug": encore_slug.strip().lower(),
         }
 
         try:
-            picks = normalize_picks([pick_1, pick_2, pick_3])
+            picks = normalize_picks(raw_picks)
             opener = normalize_slot(opener_slug)
             closer = normalize_slot(closer_slug)
             encore = normalize_slot(encore_slug)

@@ -1,7 +1,7 @@
 """Predictions read/write helpers.
 
 Submissions:
-    - Validate slugs (3 picks; opener/closer/encore optional).
+    - Validate slugs (1 to 5 picks; opener/closer/encore optional).
     - Refuse if ``prediction_locks.lock_at`` has passed (DB trigger is the
       backstop, but we surface a clean error first).
     - Insert. The (user_id, show_date) UNIQUE constraint prevents
@@ -49,12 +49,12 @@ class PredictionRow:
 
 
 def normalize_picks(raw_picks: list[str]) -> list[str]:
-    """Strip + dedupe + sort the bag-pick slugs, enforce cardinality 3."""
+    """Strip + dedupe + sort the song-pick slugs, enforce cardinality 1..5."""
     cleaned = [p.strip().lower() for p in raw_picks if p and p.strip()]
-    if len(cleaned) != 3:
-        raise PredictionError("Pick exactly three songs.")
-    if len(set(cleaned)) != 3:
-        raise PredictionError("Your three picks must be different songs.")
+    if not 1 <= len(cleaned) <= 5:
+        raise PredictionError("Pick between one and five songs.")
+    if len(set(cleaned)) != len(cleaned):
+        raise PredictionError("Your picks must all be different songs.")
     return sorted(cleaned)
 
 
