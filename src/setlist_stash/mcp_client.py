@@ -4,10 +4,13 @@ Calls the FastMCP Streamable HTTP endpoint. We use synchronous request/response
 only — no SSE streaming. Returns plain dicts (not Pydantic models) so the
 game keeps its own narrower internal shapes.
 
-Pre-lock policy: the autocomplete used by the picks form returns ONLY
-``{slug, title}``. ``times_played``, ``gap_current``, etc. are stripped here
-so they can't leak into a pre-lock UI. Post-lock callers (resolver, post-lock
-assist views) call ``get_song`` directly and get the full payload.
+Pre-lock policy: ``search_songs_pre_lock`` returns ONLY ``{slug, title}`` and
+exists for any caller that must not leak assist data. The picks form uses
+``search_songs_for_picker``, which additionally carries ``gap_current`` (shows
+since last play) as a deliberate fair-play *help* — so a player doesn't waste a
+pick on a song played last night. Play counts stay stripped on both. Post-lock
+callers (resolver, post-lock assist views) call ``get_song`` directly and get
+the full payload.
 
 Field-name normalization: upstream mcp-phish exposes a song field called
 ``gap``. The plan's scoring formula uses ``gap_current``. We normalize at the
@@ -181,6 +184,41 @@ class McpPhishClient:
             for r in rows
             if "slug" in r and "title" in r
         ]
+
+    async def search_songs_for_picker(
+        self, query: str, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Pre-lock picker autocomplete: ``{slug, title, gap_current}``.
+
+        Like :meth:`search_songs_pre_lock`, but deliberately carries the
+        song's current gap (shows since last play) so the picker can show a
+        muted "last played N shows ago" hint. This is a fair-play *help* — it
+        tells a player not to waste a pick on something just played last night.
+        Play counts and other assist fields stay stripped.
+
+        ``gap_current`` is ``None`` when upstream omits it (e.g. the Phish
+        deployment, or a never-played song), so callers must degrade
+        gracefully and simply not render a hint in that case.
+        """
+        rows = await self._call_tool("search_songs", {"query": query, "limit": limit})
+        if not isinstance(rows, list):
+            raise McpPhishError(f"search_songs: unexpected shape {type(rows).__name__}")
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            if "slug" not in r or "title" not in r:
+                continue
+            # Upstream may call the field ``gap`` or ``gap_current``; normalize.
+            gap = r.get("gap_current")
+            if gap is None:
+                gap = r.get("gap")
+            out.append(
+                {
+                    "slug": str(r["slug"]),
+                    "title": str(r["title"]),
+                    "gap_current": int(gap) if gap is not None else None,
+                }
+            )
+        return out
 
     async def search_songs_full(
         self, query: str, limit: int = 25

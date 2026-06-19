@@ -18,6 +18,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
+from html import escape
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -100,6 +101,30 @@ logger = logging.getLogger("setlist_stash.server")
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
 _STATIC_DIR = _PACKAGE_DIR / "static"
+
+
+def _gap_label(gap: Any) -> str:
+    """Human-readable "shows since last play" label for the picker.
+
+    ``gap`` is the number of completed shows since the song last appeared:
+    0 means it was played at the most recent completed show (last night),
+    higher means longer since. Returns ``""`` when gap is unknown (None) so
+    the caller can degrade to a plain song title — keeps the shared repo's
+    Phish deployment working even if its upstream omits gap.
+    """
+    if gap is None:
+        return ""
+    try:
+        n = int(gap)
+    except (TypeError, ValueError):
+        return ""
+    if n < 0:
+        return ""
+    if n == 0:
+        return "last show"
+    if n == 1:
+        return "1 show gap"
+    return f"{n} show gap"
 
 
 def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
@@ -510,10 +535,15 @@ def build_app(
     async def songs_search(
         request: Request, q: str = Query("", min_length=0, max_length=64)
     ) -> HTMLResponse:
-        """Pre-lock-safe autocomplete.
+        """Pre-lock picker autocomplete.
 
-        Returns ``<option value="slug">title</option>`` rows. ``times_played``
-        and ``gap`` are stripped at the wrapper boundary.
+        Returns ``<option value="slug" data-gap-label="...">title</option>``
+        rows. Play counts stay stripped; only the song's current gap (shows
+        since last play) is surfaced, as a fair-play help so a player doesn't
+        waste a pick on a song played last night. The ``data-gap-label`` text
+        is appended to the visible option label so it shows in the native
+        datalist dropdown too. Empty when gap is unknown (e.g. the Phish
+        deployment) — the UI degrades to plain title.
         """
         if not q.strip():
             return HTMLResponse("")
@@ -521,15 +551,28 @@ def build_app(
             async with McpPhishClient(
                 cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
             ) as mcp:
-                rows = await mcp.search_songs_pre_lock(q.strip(), limit=10)
+                rows = await mcp.search_songs_for_picker(q.strip(), limit=10)
         except McpPhishError:
             logger.warning("songs_search: mcp-phish unreachable")
             return HTMLResponse("")
-        # Important: only slug + title. Validated by tests.
-        opts = "".join(
-            f'<option value="{r["slug"]}">{r["title"]}</option>' for r in rows
-        )
-        return HTMLResponse(opts)
+        # slug + title + gap label only. Play counts stay stripped.
+        opts_parts: list[str] = []
+        for r in rows:
+            slug = escape(str(r["slug"]), quote=True)
+            title = escape(str(r["title"]))
+            label = _gap_label(r.get("gap_current"))
+            if label:
+                safe_label = escape(label, quote=True)
+                # Append the gap to the visible option text so it shows in the
+                # native dropdown; keep the raw label in data-gap-label so the
+                # JS can show it as a muted hint on the picked chip.
+                opts_parts.append(
+                    f'<option value="{slug}" data-gap-label="{safe_label}">'
+                    f"{title} ({escape(label)})</option>"
+                )
+            else:
+                opts_parts.append(f'<option value="{slug}">{title}</option>')
+        return HTMLResponse("".join(opts_parts))
 
     # ----- leaderboard ------------------------------------------------------
 

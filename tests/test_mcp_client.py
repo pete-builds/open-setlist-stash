@@ -93,6 +93,39 @@ async def test_search_songs_pre_lock_strips_to_slug_and_title() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_search_songs_for_picker_carries_gap_strips_play_counts() -> None:
+    """Picker autocomplete surfaces gap (fair-play help) but not play counts."""
+    upstream = [
+        {"slug": "higgins", "title": "Higgins", "times_played": 357, "gap": 6},
+        {"slug": "mantis", "title": "Mantis", "times_played": 400, "gap_current": 0},
+    ]
+    respx.post(URL).respond(json=_mcp_response(upstream))
+    async with McpPhishClient(URL) as c:
+        _skip_handshake(c)
+        rows = await c.search_songs_for_picker("hig")
+    assert rows == [
+        {"slug": "higgins", "title": "Higgins", "gap_current": 6},
+        {"slug": "mantis", "title": "Mantis", "gap_current": 0},
+    ]
+    for r in rows:
+        assert "times_played" not in r
+        assert "original" not in r
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_search_songs_for_picker_gap_none_when_absent() -> None:
+    """Degrades gracefully: gap_current is None when upstream omits it."""
+    upstream = [{"slug": "tweezer", "title": "Tweezer", "times_played": 456}]
+    respx.post(URL).respond(json=_mcp_response(upstream))
+    async with McpPhishClient(URL) as c:
+        _skip_handshake(c)
+        rows = await c.search_songs_for_picker("twe")
+    assert rows == [{"slug": "tweezer", "title": "Tweezer", "gap_current": None}]
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_search_songs_full_keeps_assist_fields() -> None:
     upstream = [{"slug": "tweezer", "title": "Tweezer", "times_played": 456}]
     respx.post(URL).respond(json=_mcp_response(upstream))

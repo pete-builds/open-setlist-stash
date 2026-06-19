@@ -147,6 +147,21 @@
           }
         }
 
+        function optionTitle(opt) {
+          // The visible label may carry an appended gap, e.g.
+          // "Higgins (6 show gap)". The clean title is everything before the
+          // last " (" that the server appended. Fall back to full text.
+          var raw = (opt.textContent || '').trim();
+          var label = opt.getAttribute('data-gap-label');
+          if (label) {
+            var suffix = ' (' + label + ')';
+            if (raw.slice(-suffix.length) === suffix) {
+              return raw.slice(0, raw.length - suffix.length);
+            }
+          }
+          return raw;
+        }
+
         function findMatchInDatalist(datalist, typed) {
           if (!datalist) return null;
           var t = (typed || '').trim().toLowerCase();
@@ -154,12 +169,14 @@
           var opts = datalist.querySelectorAll('option');
           for (var i = 0; i < opts.length; i++) {
             var slug = (opts[i].getAttribute('value') || '').trim().toLowerCase();
-            var title = (opts[i].textContent || '').trim().toLowerCase();
-            // Exact match on slug OR title -> picked.
-            if (t === slug || t === title) {
+            var cleanTitle = optionTitle(opts[i]);
+            var fullText = (opts[i].textContent || '').trim().toLowerCase();
+            // Exact match on slug, clean title, or the full label (with gap).
+            if (t === slug || t === cleanTitle.toLowerCase() || t === fullText) {
               return {
                 slug: opts[i].getAttribute('value'),
-                title: opts[i].textContent
+                title: cleanTitle,
+                gapLabel: opts[i].getAttribute('data-gap-label') || ''
               };
             }
           }
@@ -175,7 +192,9 @@
             titleInput.value = picked.title;
             picker.classList.remove('song-picker-bad');
             picker.classList.add('song-picker-picked');
-            if (hint) hint.textContent = '';
+            // Show the song's gap (shows since last play) as a muted hint on
+            // the picked chip. Empty when the deployment has no gap data.
+            if (hint) hint.textContent = picked.gapLabel || '';
           } else {
             slugInput.value = '';
             picker.classList.remove('song-picker-picked');
