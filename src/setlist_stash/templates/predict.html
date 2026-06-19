@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Predict {{ show.show_date }}{% endblock %}
 {% block content %}
-  <h1>Predict {{ show.show_date }}</h1>
-  {% if show.venue_name %}<p>{{ show.venue_name }}{% if show.location %} - {{ show.location }}{% endif %}</p>{% endif %}
+  <h1>{{ show.venue_name or "Make your picks" }}</h1>
+  <p class="show-meta">{% if show.location %}{{ show.location }} &middot; {% endif %}{{ show.show_date }}</p>
 
   {% if lock.is_locked %}
     <p class="lock"><strong>Locked</strong> at {{ lock.lock_at_display }}.</p>
