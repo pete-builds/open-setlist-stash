@@ -458,12 +458,14 @@ async def _seed_lock_and_prediction(
 
 @pytest.mark.asyncio
 @requires_pg
-async def test_gate_partial_setlist_not_scored(
+async def test_gate_partial_setlist_scored_live(
     pg_pool: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """End of Set 1, no encore: the gate skips. Lock stays open, score NULL.
+    """End of Set 1, no encore: scored LIVE (running total) but NOT finalized.
 
-    poll_state records the observation so the next tick can build on it.
+    The additive model scores played picks every tick; the encore bonus stays 0
+    until the encore lands. The lock stays open (resolved_at NULL) so later ticks
+    keep re-scoring, and poll_state records the observation.
     """
     from setlist_stash import db, resolve
 
@@ -495,19 +497,24 @@ async def test_gate_partial_setlist_not_scored(
     result = await run_tick(
         _make_settings(stable_polls_required=6, backstop_hours=6)
     )
-    assert result.status == "noop"
+    # Live scoring happened, but the show is not finalized.
+    assert result.status == "success"
     assert result.shows_scanned == 1
     assert result.shows_resolved == 0
 
     async with pg_pool.acquire() as conn:
-        pred = await conn.fetchrow("SELECT score FROM predictions LIMIT 1")
+        pred = await conn.fetchrow("SELECT score, score_breakdown FROM predictions LIMIT 1")
         lock = await conn.fetchrow("SELECT resolved_at FROM prediction_locks LIMIT 1")
         ps = await conn.fetchrow(
             "SELECT last_track_count, encore_seen, stable_polls, complete "
             "FROM poll_state WHERE show_date = $1",
             datetime.fromisoformat(show_date).date(),
         )
-    assert pred["score"] is None
+    # 3 picks played (2 each) = 6; encore (loving-cup) hasn't landed yet → +0.
+    assert pred["score"] == 6
+    breakdown = json.loads(pred["score_breakdown"])
+    assert breakdown["encore"]["bonus"] == 0
+    # Not finalized: lock stays open so later ticks keep re-scoring.
     assert lock["resolved_at"] is None
     assert ps is not None
     assert ps["last_track_count"] == 3

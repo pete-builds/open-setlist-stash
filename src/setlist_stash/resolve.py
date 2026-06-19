@@ -326,56 +326,44 @@ async def _resolve_show(
         backstop=timedelta(hours=settings.resolver_backstop_hours),
     )
     await upsert_poll_state(pool, decision.next_state)
+
+    # Live scoring: score every prediction against the CURRENT setlist on every
+    # tick. The model is additive (a pick is +2 once it's played; the encore
+    # call is +3 once the encore lands), so re-scoring a partial setlist shows
+    # running totals and self-corrects if the setlist is edited — it never
+    # freezes a wrong score. The completeness gate now only decides when to
+    # FINALIZE (stamp resolved_at) so we stop re-scoring on later ticks.
+    scored_count = await _score_predictions(pool, show_date_obj, parsed)
+
     if not decision.complete:
         logger.info(
-            "setlist not yet complete; skipping",
+            "live partial scoring",
             extra={
                 "show_date": show_date,
-                "reason": decision.reason,
                 "track_count": parsed.song_count,
                 "encore_seen": decision.next_state.encore_seen,
                 "stable_polls": decision.next_state.stable_polls,
+                "scored": scored_count,
             },
         )
         return ShowResolveOutcome(
             show_date=show_date,
-            status="skipped",
+            status="scored_live",
+            predictions_scored=scored_count,
             setlist_song_count=parsed.song_count,
         )
+
     logger.info(
-        "setlist complete; scoring",
+        "setlist complete; finalizing",
         extra={
             "show_date": show_date,
             "reason": decision.reason,
             "track_count": parsed.song_count,
             "stable_polls": decision.next_state.stable_polls,
+            "scored": scored_count,
         },
     )
-
-    predictions = await _predictions_for_show(pool, show_date_obj)
-
-    scored_count = 0
-    async with pool.acquire() as conn, conn.transaction():
-        for pred in predictions:
-            breakdown = score_prediction(
-                pick_song_slugs=list(pred["pick_song_slugs"]),
-                encore_slug=pred["encore_slug"],
-                actual_encore_slugs=parsed.encore_slugs,
-                setlist_slugs=parsed.all_slugs,
-            )
-            await conn.execute(
-                """
-                UPDATE predictions
-                   SET score = $2,
-                       score_breakdown = $3::jsonb
-                 WHERE id = $1
-                """,
-                int(pred["id"]),
-                int(breakdown["total"]),
-                json.dumps(breakdown),
-            )
-            scored_count += 1
-
+    async with pool.acquire() as conn:
         await conn.execute(
             """
             UPDATE prediction_locks
@@ -398,6 +386,39 @@ async def _resolve_show(
         predictions_scored=scored_count,
         setlist_song_count=parsed.song_count,
     )
+
+
+async def _score_predictions(
+    pool: asyncpg.Pool[Any], show_date_obj: Any, parsed: ParsedSetlist
+) -> int:
+    """Score every prediction for a show against ``parsed`` (possibly partial).
+
+    Idempotent and safe to re-run each tick — the additive model recomputes
+    each prediction's total from the current setlist every time.
+    """
+    predictions = await _predictions_for_show(pool, show_date_obj)
+    scored_count = 0
+    async with pool.acquire() as conn, conn.transaction():
+        for pred in predictions:
+            breakdown = score_prediction(
+                pick_song_slugs=list(pred["pick_song_slugs"]),
+                encore_slug=pred["encore_slug"],
+                actual_encore_slugs=parsed.encore_slugs,
+                setlist_slugs=parsed.all_slugs,
+            )
+            await conn.execute(
+                """
+                UPDATE predictions
+                   SET score = $2,
+                       score_breakdown = $3::jsonb
+                 WHERE id = $1
+                """,
+                int(pred["id"]),
+                int(breakdown["total"]),
+                json.dumps(breakdown),
+            )
+            scored_count += 1
+    return scored_count
 
 
 async def _mark_show_cancelled(pool: asyncpg.Pool[Any], show_date: Any) -> int:
@@ -488,6 +509,7 @@ async def run_tick(settings: Settings) -> TickResult:
     cancel_after = timedelta(hours=settings.resolver_cancel_after_hours)
     summary: dict[str, Any] = {"shows": [], "errors": []}
     shows_resolved = 0
+    live_scored = 0
     predictions_scored = 0
     encountered_error = False
     now = datetime.now(UTC)
@@ -553,6 +575,9 @@ async def run_tick(settings: Settings) -> TickResult:
                 if outcome.status in ("resolved", "cancelled"):
                     shows_resolved += 1
                     predictions_scored += outcome.predictions_scored
+                elif outcome.status == "scored_live":
+                    live_scored += 1
+                    predictions_scored += outcome.predictions_scored
                 if outcome.status == "error":
                     encountered_error = True
                     if outcome.error:
@@ -560,16 +585,17 @@ async def run_tick(settings: Settings) -> TickResult:
                             {"show_date": outcome.show_date, "error": outcome.error}
                         )
 
+        worked = shows_resolved + live_scored
         if encountered_error:
-            status = "partial" if shows_resolved > 0 else "error"
+            status = "partial" if worked > 0 else "error"
         else:
-            status = "success" if shows_resolved > 0 else "noop"
+            status = "success" if worked > 0 else "noop"
 
-        # Refresh leaderboard snapshots when at least one show resolved this
-        # tick. Errors here log + continue so the resolver tick stays green
-        # even if a leaderboard rebuild has trouble — the next tick will
-        # retry. We capture counts into the summary for observability.
-        if shows_resolved > 0:
+        # Refresh leaderboard snapshots when any show was scored this tick —
+        # including live partial scoring (scored_live), so the league board
+        # updates throughout the show, not just at finalization. Errors here
+        # log + continue so the resolver tick stays green; the next tick retries.
+        if worked > 0:
             try:
                 rebuild_counts = await rebuild_all(pool)
                 summary["leaderboard"] = rebuild_counts
