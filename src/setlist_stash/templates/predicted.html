@@ -5,9 +5,7 @@
   <p>Locked in for <strong>{{ show_date }}</strong>.</p>
   <ul>
     <li>Picks: {{ pick_song_slugs | join(', ') }}</li>
-    <li>Opener: {{ opener_slug or '-' }}</li>
-    <li>Closer: {{ closer_slug or '-' }}</li>
-    <li>Encore: {{ encore_slug or '-' }}</li>
+    <li>Encore call: {{ encore_slug or '-' }}</li>
   </ul>
   <p class="muted">
     Score lands once the resolver picks up the published setlist.

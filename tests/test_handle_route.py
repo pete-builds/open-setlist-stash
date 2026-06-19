@@ -119,9 +119,7 @@ async def test_locked_show_rejects_submission(
             "pick_1": "tweezer",
             "pick_2": "fluffhead",
             "pick_3": "harry-hood",
-            "opener_slug": "",
-            "closer_slug": "",
-            "encore_slug": "",
+            "encore_pick": "pick_1",
         },
         follow_redirects=False,
     )

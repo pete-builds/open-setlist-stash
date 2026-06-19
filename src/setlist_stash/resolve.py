@@ -359,11 +359,7 @@ async def _resolve_show(
         for pred in predictions:
             breakdown = score_prediction(
                 pick_song_slugs=list(pred["pick_song_slugs"]),
-                opener_slug=pred["opener_slug"],
-                closer_slug=pred["closer_slug"],
                 encore_slug=pred["encore_slug"],
-                actual_opener=parsed.opener_slug,
-                actual_closer=parsed.closer_slug,
                 actual_encore_slugs=parsed.encore_slugs,
                 setlist_slugs=parsed.all_slugs,
             )

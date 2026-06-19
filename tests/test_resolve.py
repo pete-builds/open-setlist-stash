@@ -225,16 +225,14 @@ async def test_run_tick_scores_published_setlist(
 
     assert pred is not None
     assert pred["score"] is not None
-    assert pred["score"] > 0  # all three picks played + every slot bonus
+    assert pred["score"] > 0  # all three picks played + encore bonus
     breakdown = json.loads(pred["score_breakdown"])
-    assert set(breakdown.keys()) == {"picks", "opener", "closer", "encore", "total"}
-    assert breakdown["opener"]["bonus"] == 5
-    assert breakdown["closer"]["bonus"] == 5
-    assert breakdown["encore"]["bonus"] == 3
-    # 3 played picks (2 each) + opener(5) + closer(5) + encore(3) = 19.
+    assert set(breakdown.keys()) == {"picks", "encore", "total"}
+    assert breakdown["encore"]["bonus"] == 5
+    # 3 played picks (2 each = 6) + encore loving-cup in the encore (5) = 11.
     assert all(p["points"] == 2 for p in breakdown["picks"])
-    assert breakdown["total"] == 19
-    assert pred["score"] == 19
+    assert breakdown["total"] == 11
+    assert pred["score"] == 11
 
     assert lock is not None
     assert lock["resolved_at"] is not None

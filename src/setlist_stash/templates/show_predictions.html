@@ -70,9 +70,7 @@
             <tr>
               <th>Handle</th>
               <th>Picks</th>
-              <th>Opener</th>
-              <th>Closer</th>
-              <th>Encore</th>
+              <th>Encore call</th>
               {% if resolved %}<th class="num">Score</th>{% endif %}
             </tr>
           </thead>
@@ -83,8 +81,6 @@
                   <a href="/u/{{ r.handle }}">{{ r.handle }}</a>
                 </td>
                 <td>{{ r.pick_song_slugs | join(', ') }}</td>
-                <td>{{ r.opener_slug or '-' }}</td>
-                <td>{{ r.closer_slug or '-' }}</td>
                 <td>{{ r.encore_slug or '-' }}</td>
                 {% if resolved %}
                   <td class="num">{{ r.score if r.score is not none else '-' }}</td>

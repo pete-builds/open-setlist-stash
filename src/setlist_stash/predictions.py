@@ -1,7 +1,7 @@
 """Predictions read/write helpers.
 
 Submissions:
-    - Validate slugs (1 to 5 picks; opener/closer/encore optional).
+    - Validate slugs (1 to 5 picks; one of them is the required encore call).
     - Refuse if ``prediction_locks.lock_at`` has passed (DB trigger is the
       backstop, but we surface a clean error first).
     - Insert. The (user_id, show_date) UNIQUE constraint prevents
@@ -71,11 +71,14 @@ async def insert_prediction(
     user_id: int,
     show_date: date,
     pick_song_slugs: list[str],
-    opener_slug: str | None,
-    closer_slug: str | None,
     encore_slug: str | None,
 ) -> int:
-    """Insert a prediction. Raises PredictionLocked / PredictionDuplicate."""
+    """Insert a prediction. Raises PredictionLocked / PredictionDuplicate.
+
+    ``opener_slug`` / ``closer_slug`` are retired from the game model but the
+    columns (and the migration-002 change-detection trigger) still reference
+    them, so we always insert NULL for both.
+    """
     async with pool.acquire() as conn:
         try:
             row = await conn.fetchrow(
@@ -84,14 +87,12 @@ async def insert_prediction(
                     user_id, show_date, pick_song_slugs,
                     opener_slug, closer_slug, encore_slug
                 )
-                VALUES ($1, $2, $3, $4, $5, $6)
+                VALUES ($1, $2, $3, NULL, NULL, $4)
                 RETURNING id
                 """,
                 user_id,
                 show_date,
                 pick_song_slugs,
-                opener_slug,
-                closer_slug,
                 encore_slug,
             )
         except asyncpg.UniqueViolationError as exc:

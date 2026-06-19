@@ -24,9 +24,7 @@
       <p>Submitted at {{ existing.submitted_at }}.</p>
       <ul>
         <li>Picks: {{ existing.pick_song_slugs | join(', ') }}</li>
-        <li>Opener: {{ existing.opener_slug or '-' }}</li>
-        <li>Closer: {{ existing.closer_slug or '-' }}</li>
-        <li>Encore: {{ existing.encore_slug or '-' }}</li>
+        <li>Encore call: {{ existing.encore_slug or '-' }}</li>
       </ul>
       <p class="muted">One prediction per user per show. Score lands after the resolver runs.</p>
     </div>
@@ -46,11 +44,12 @@
       <p class="error">{{ error }}</p>
     {% endif %}
     <p class="muted">
-      Pick up to 5 songs (any set) at 2 points each, then optionally call the
-      opener (+5), closer (+5), and encore (+3).
+      Pick up to 5 songs (any set) at 2 points each, and tap one as your
+      encore call (+5 if it lands in the encore).
       <a href="/#how-it-works">How scoring works →</a>
     </p>
     <form method="post" action="/predict/{{ show.show_date }}" id="predict-form" novalidate>
+      {% set encore_choice = form_values.get('encore_pick', '') if form_values else '' %}
       <fieldset>
         <legend>Up to five songs (any set)</legend>
         {% for i in [1, 2, 3, 4, 5] %}
@@ -81,35 +80,11 @@
                    {% if is_required %}required{% endif %}>
             <datalist id="songs-list-{{ slot }}"></datalist>
             <input type="hidden" name="{{ slot }}" id="{{ slot }}" class="song-picker-slug" value="{{ '' if is_bad else initial }}">
-            <p class="picker-hint muted" data-for="{{ slot }}"></p>
-          </div>
-        {% endfor %}
-      </fieldset>
-
-      <fieldset>
-        <legend>Slot picks (optional)</legend>
-        {% for slot in ['opener_slug', 'closer_slug', 'encore_slug'] %}
-          {% set label = {'opener_slug': 'Opener', 'closer_slug': 'Closer', 'encore_slug': 'Encore'}[slot] %}
-          {% set initial = form_values.get(slot, '') if form_values else '' %}
-          {% set is_bad = initial and initial in bad_slugs %}
-          <div class="song-picker song-picker-optional{% if is_bad %} song-picker-bad{% endif %}" data-slot="{{ slot }}">
-            <label for="{{ slot }}_title">{{ label }}{% if is_bad %} <span class="error">(not a real song)</span>{% endif %}</label>
-            <input type="text"
-                   id="{{ slot }}_title"
-                   class="song-picker-title"
-                   name="q"
-                   value="{{ initial }}"
-                   placeholder="optional"
-                   list="songs-list-{{ slot }}"
-                   hx-get="/songs/search"
-                   hx-trigger="input changed delay:200ms, focus"
-                   hx-target="#songs-list-{{ slot }}"
-                   hx-swap="innerHTML"
-                   hx-include="this"
-                   hx-params="q"
-                   autocomplete="off">
-            <datalist id="songs-list-{{ slot }}"></datalist>
-            <input type="hidden" name="{{ slot }}" id="{{ slot }}" class="song-picker-slug" value="{{ '' if is_bad else initial }}">
+            <label class="encore-call-label">
+              <input type="radio" name="encore_pick" value="{{ slot }}" class="encore-call-radio"
+                     {% if encore_choice == slot %}checked{% endif %}>
+              ⭐ encore call
+            </label>
             <p class="picker-hint muted" data-for="{{ slot }}"></p>
           </div>
         {% endfor %}
@@ -119,7 +94,7 @@
       <p class="muted">
         Pick from the autocomplete suggestions. Free-text entries that don't
         match a known song will be rejected. Pick 1 is required; the rest are
-        optional.
+        optional. Tap one pick's ⭐ as your encore call.
       </p>
     </form>
   {% endif %}
@@ -138,12 +113,38 @@
       // On blur without a match, we clear the hidden slug and show a hint.
       //
       // The submit button is disabled until the one required picker (pick_1)
-      // has a non-empty hidden slug. Picks 2-5 are optional.
+      // has a non-empty hidden slug AND an encore-call radio is checked on a
+      // pick row whose hidden slug is filled. Picks 2-5 are optional.
       (function () {
         var REQUIRED_SLOTS = ['pick_1'];
 
         function pickers() {
           return Array.prototype.slice.call(document.querySelectorAll('.song-picker'));
+        }
+
+        function checkedEncoreRadio() {
+          return document.querySelector('input[name="encore_pick"]:checked');
+        }
+
+        function encoreCallValid() {
+          // The checked radio names a slot ("pick_3"); that slot's hidden
+          // slug must be non-empty.
+          var radio = checkedEncoreRadio();
+          if (!radio) return false;
+          var hidden = document.getElementById(radio.value);
+          return !!(hidden && hidden.value.trim());
+        }
+
+        function syncEncoreForSlot(slot) {
+          // If the encore call points at this slot but the slot's slug just
+          // got cleared, drop the radio selection so it can't ship an empty
+          // encore call.
+          var radio = checkedEncoreRadio();
+          if (!radio || radio.value !== slot) return;
+          var hidden = document.getElementById(slot);
+          if (!hidden || !hidden.value.trim()) {
+            radio.checked = false;
+          }
         }
 
         function findMatchInDatalist(datalist, typed) {
@@ -186,6 +187,9 @@
           var slugInput = picker.querySelector('.song-picker-slug');
           slugInput.value = '';
           picker.classList.remove('song-picker-picked');
+          // If this slot was the encore call, clearing its slug invalidates
+          // the encore selection.
+          syncEncoreForSlot(picker.getAttribute('data-slot'));
           updateSubmitState();
         }
 
@@ -199,6 +203,9 @@
               ok = false;
               break;
             }
+          }
+          if (ok && !encoreCallValid()) {
+            ok = false;
           }
           btn.disabled = !ok;
         }
@@ -263,6 +270,12 @@
 
         document.addEventListener('DOMContentLoaded', function () {
           pickers().forEach(wirePicker);
+          // Encore-call radios gate the submit button too.
+          Array.prototype.slice
+            .call(document.querySelectorAll('input[name="encore_pick"]'))
+            .forEach(function (radio) {
+              radio.addEventListener('change', updateSubmitState);
+            });
           // If the server pre-filled valid slugs (e.g. after a server-side
           // error that preserved valid picks), confirm the picked state.
           pickers().forEach(function (p) {
@@ -277,6 +290,8 @@
               // requires re-picking from the list.
               slug.value = '';
             }
+            // Drop a pre-checked encore radio that points at a now-empty slot.
+            syncEncoreForSlot(p.getAttribute('data-slot'));
           });
           updateSubmitState();
         });

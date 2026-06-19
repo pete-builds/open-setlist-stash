@@ -93,7 +93,6 @@ from setlist_stash.predictions import (
     get_user_prediction,
     insert_prediction,
     normalize_picks,
-    normalize_slot,
 )
 
 logger = logging.getLogger("setlist_stash.server")
@@ -305,9 +304,7 @@ def build_app(
         pick_3: str = Form(""),
         pick_4: str = Form(""),
         pick_5: str = Form(""),
-        opener_slug: str = Form(""),
-        closer_slug: str = Form(""),
-        encore_slug: str = Form(""),
+        encore_pick: str = Form(""),
     ) -> Response:
         user = await _resolve_user(request)
         if user is None:
@@ -315,26 +312,24 @@ def build_app(
         pool = get_pool()
 
         raw_picks = [pick_1, pick_2, pick_3, pick_4, pick_5]
-
-        # Capture raw values up-front so any error path can re-render the
-        # form with the user's existing picks intact (including invalid
-        # ones, so they can see what to fix).
-        raw_form: dict[str, str] = {
+        # Per-slot raw values, so we can resolve the encore call (which names
+        # a slot like "pick_3") back to its submitted slug.
+        slot_values: dict[str, str] = {
             "pick_1": pick_1.strip().lower(),
             "pick_2": pick_2.strip().lower(),
             "pick_3": pick_3.strip().lower(),
             "pick_4": pick_4.strip().lower(),
             "pick_5": pick_5.strip().lower(),
-            "opener_slug": opener_slug.strip().lower(),
-            "closer_slug": closer_slug.strip().lower(),
-            "encore_slug": encore_slug.strip().lower(),
         }
+
+        # Capture raw values up-front so any error path can re-render the
+        # form with the user's existing picks intact (including invalid
+        # ones, so they can see what to fix). ``encore_pick`` rides along so
+        # the selected encore radio survives a validation error.
+        raw_form: dict[str, str] = {**slot_values, "encore_pick": encore_pick.strip()}
 
         try:
             picks = normalize_picks(raw_picks)
-            opener = normalize_slot(opener_slug)
-            closer = normalize_slot(closer_slug)
-            encore = normalize_slot(encore_slug)
         except PredictionError as exc:
             return await _re_render_predict(
                 request, user, show_date, error=str(exc), form_values=raw_form
@@ -360,14 +355,27 @@ def build_app(
                 form_values=raw_form,
             )
 
+        # Resolve the encore call. ``encore_pick`` names a pick slot (e.g.
+        # "pick_3"); the encore slug is whatever that slot submitted. It must
+        # be set and must reference a slot that holds a real (validated-later)
+        # slug — i.e. one that survived normalize_picks.
+        encore = slot_values.get(encore_pick.strip(), "") or None
+        if encore is None or encore not in picks:
+            return await _re_render_predict(
+                request,
+                user,
+                show_date,
+                error="Tap one of your picks as the encore call.",
+                form_values=raw_form,
+            )
+
         # Slug validation gate (Layer 1): confirm every submitted slug
         # corresponds to a real song before we touch the DB. The picker UI
         # is a UX guardrail; this is the trust boundary. A user submitting
         # via curl, with JS off, or against a stale autocomplete list
-        # cannot bypass this.
-        slugs_to_check = [
-            s for s in (*picks, opener, closer, encore) if s
-        ]
+        # cannot bypass this. The encore slug is already one of ``picks``, so
+        # it needs no separate validation.
+        slugs_to_check = list(picks)
         try:
             async with McpPhishClient(
                 cfg.mcp_phish_url,
@@ -420,8 +428,6 @@ def build_app(
                 user_id=user.id,
                 show_date=show_date,
                 pick_song_slugs=picks,
-                opener_slug=opener,
-                closer_slug=closer,
                 encore_slug=encore,
             )
         except PredictionLocked as exc:
@@ -451,8 +457,6 @@ def build_app(
             current_user=user,
             show_date=show_date.isoformat(),
             pick_song_slugs=picks,
-            opener_slug=opener,
-            closer_slug=closer,
             encore_slug=encore,
             leagues=memberships,
         )

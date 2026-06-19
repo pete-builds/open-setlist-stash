@@ -131,9 +131,7 @@ async def test_post_with_bogus_slug_rejected_no_row_written(
             "pick_1": "tweezer",
             "pick_2": "fluffhead",
             "pick_3": "blarghhh",
-            "opener_slug": "",
-            "closer_slug": "",
-            "encore_slug": "",
+            "encore_pick": "pick_1",
         },
         follow_redirects=False,
     )
@@ -177,9 +175,7 @@ async def test_post_preserves_valid_picks_in_form_after_error(
             "pick_1": "tweezer",
             "pick_2": "fluffhead",
             "pick_3": "wat",
-            "opener_slug": "",
-            "closer_slug": "",
-            "encore_slug": "",
+            "encore_pick": "pick_1",
         },
         follow_redirects=False,
     )
@@ -198,27 +194,17 @@ async def test_post_with_all_valid_slugs_creates_row(
     pg_pool: asyncpg.Pool[Any] | None,
     async_client: AsyncClient,
 ) -> None:
-    """All 6 slugs valid -> prediction lands."""
+    """All 3 picks valid + an encore call -> prediction lands."""
     assert pg_pool is not None
     user_id, show_date = await _seed_user_and_lock(pg_pool, handle="all_valid")
 
-    # 6 distinct slugs => one batch validate_song_slugs call after the
+    # 3 distinct picks => one batch validate_song_slugs call after the
     # handshake. The picks are alphabetized by normalize_picks before
-    # validation: fluffhead, harry-hood, tweezer, then opener/closer/encore
-    # in original order.
+    # validation: fluffhead, harry-hood, tweezer.
     route = respx.post(MCP_URL)
     route.side_effect = [
         *_handshake_responses(),
-        _validate_ok(
-            valid=[
-                "fluffhead",
-                "harry-hood",
-                "tweezer",
-                "wilson",
-                "slave-to-the-traffic-light",
-                "tweezer-reprise",
-            ]
-        ),
+        _validate_ok(valid=["fluffhead", "harry-hood", "tweezer"]),
     ]
 
     async_client.cookies.set(
@@ -230,9 +216,7 @@ async def test_post_with_all_valid_slugs_creates_row(
             "pick_1": "tweezer",
             "pick_2": "fluffhead",
             "pick_3": "harry-hood",
-            "opener_slug": "wilson",
-            "closer_slug": "slave-to-the-traffic-light",
-            "encore_slug": "tweezer-reprise",
+            "encore_pick": "pick_3",  # harry-hood is the encore call
         },
         follow_redirects=False,
     )
@@ -251,9 +235,10 @@ async def test_post_with_all_valid_slugs_creates_row(
     assert sorted(row["pick_song_slugs"]) == sorted(
         ["tweezer", "fluffhead", "harry-hood"]
     )
-    assert row["opener_slug"] == "wilson"
-    assert row["closer_slug"] == "slave-to-the-traffic-light"
-    assert row["encore_slug"] == "tweezer-reprise"
+    # Opener/closer are retired from the game model; always NULL.
+    assert row["opener_slug"] is None
+    assert row["closer_slug"] is None
+    assert row["encore_slug"] == "harry-hood"
 
 
 @requires_pg
@@ -285,9 +270,7 @@ async def test_post_curl_bypass_attempt_rejected(
             "pick_1": "blarghhh",
             "pick_2": "fakey",
             "pick_3": "bogusone",
-            "opener_slug": "",
-            "closer_slug": "",
-            "encore_slug": "",
+            "encore_pick": "pick_1",
         },
         follow_redirects=False,
     )
