@@ -2,63 +2,58 @@
 
 [![CI](https://github.com/pete-builds/open-setlist-stash/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/open-setlist-stash/actions/workflows/ci.yml)
 
-Open-source setlist prediction game for Phish shows. The reference deployment is [Tweezer Picks](https://github.com/pete-builds/open-setlist-stash); fork it and brand your own instance via the `SITE_NAME` env var.
+Open-source, self-hostable **setlist-prediction game** for live-music fans. It is **band-agnostic**: the game engine reads setlist data from an MCP server, so you can run it for any act that has a data source. Two reference deployments run on this same codebase:
 
-## Branding your instance
+- **Wappy Picks** (Umphrey's McGee): https://www.wappypicks.com, data via [mcp-umphreys](https://github.com/pete-builds/mcp-umphreys)
+- **Tweezer Picks** (Phish): data via [mcp-phish](https://github.com/pete-builds/mcp-phish)
 
-Every page title, the brand wordmark, and the marketing copy read from the `SITE_NAME` environment variable. Set it in your `.env`:
-
-```
-SITE_NAME=Your Site Name
-```
-
-### Themes
-
-The platform ships with a clean minimal default theme (`static/style.css`). To layer on a custom look, write your own CSS and load it on top of the default. There are two ways:
-
-**Option 1 — bundle the theme with the image (good for forks).** Drop the file into `src/setlist_stash/static/themes/your-theme.css`, set `THEME_FILE=themes/your-theme.css` in `.env`, and rebuild. The package-data glob picks up anything under `static/themes/*.css` at build time.
-
-**Option 2 — keep the theme private to your deployment (good if your branding is yours).** Mount the CSS into the container at runtime via `docker-compose.override.yml`. See `docker-compose.override.yml.example` in the repo. Your private CSS lives outside the repo on the host machine. Compose merges the override automatically on `up`.
-
-The reference deployment, [Tweezer Picks](http://192.168.86.20:3706), uses option 2: its Lot Poster theme (Phish-fan hoodie-patch aesthetic) is mounted from the operator's private path. The platform repo never sees it. To rebrand for your own band/community, write your own CSS and override the class hooks documented in `static/style.css`.
+They differ only by environment config, branding, and which MCP data source they point at. There is no per-band fork: one engine, many deployments.
 
 ## What it is
 
-Pick three songs, an opener, a closer, and an encore for an upcoming show.
-Predictions lock at showtime. After the show resolves on phish.net, scores
-post to a public leaderboard (weekly, tour, all-time).
+Pick **up to 5 songs** for an upcoming show (at least one required). Each song that gets played is worth **2 points**. You also make **one encore call**: tap one of your picks as your encore guess. If it lands in the encore you get **+5**; if it plays elsewhere it still earns its 2.
 
-Scoring is rarity-weighted: rarer songs are worth more points, and getting
-a slot right (opener/closer/encore) earns a bonus.
+Predictions **lock** at a configurable showtime. The game then **scores live during the show**, re-reading the (partial) setlist and rebuilding the leaderboard on a short interval, so scores climb in real time as songs are played. Leaderboards run per-league and global.
 
-This is a fair human contest. AI smart-pick assist is disabled during the
-prediction window. Gap stats and venue history unlock after lock.
+The song picker shows each song's **show gap** (how many shows since it was last played) so you can avoid burning a pick on something just played. It is a fair human contest; any optional AI smart-pick assist is disabled during the prediction window.
+
+## Bring your own data (MCP)
+
+The game never touches a setlist database directly. Every read goes through an **MCP server** (Streamable HTTP, JSON-RPC) that implements the setlist contract, configured via `MCP_PHISH_URL` (the env name is historical; point it at any compatible server). A small async wrapper in `src/setlist_stash/mcp_client.py` calls the tools the server exposes.
+
+Reference data servers:
+- [mcp-umphreys](https://github.com/pete-builds/mcp-umphreys) — Umphrey's McGee, backed by [umphreys-vault](https://github.com/pete-builds/umphreys-vault) (All Things Umphreys data)
+- [mcp-phish](https://github.com/pete-builds/mcp-phish) — Phish (phish.net / phish.in data)
+
+To support a new band, stand up an MCP server that satisfies the same contract and point the game at it.
+
+## Branding your instance
+
+All branding is deployment-specific (config + mounted assets), so the public repo carries no operator-specific identity.
+
+- **Name:** every page title and the brand wordmark read from `SITE_NAME`. Emoji work (e.g. `SITE_NAME="🎸 Wappy Picks 🤘"`).
+- **Footer credit:** set `FOOTER_CREDIT` and `FOOTER_CREDIT_URL` to add an attribution line (defaults empty, so a self-host shows none).
+- **Theme:** the platform ships a clean default (`static/style.css`). Layer your own CSS on top via either:
+  - *Bundle it (good for forks):* drop a file in `src/setlist_stash/static/themes/your-theme.css`, set `THEME_FILE=themes/your-theme.css`, rebuild.
+  - *Keep it private (good if the branding is yours):* mount the CSS at runtime via `docker-compose.override.yml` (see `docker-compose.override.yml.example`). The CSS lives outside the repo on the host; compose merges the override on `up`.
+- **Email signup** is gated on `EMAIL_PROVIDER`: with it `disabled` (the default), the magic-link UI is hidden and players join with an anonymous handle + cookie. Set a real provider to enable email magic-link auth.
+
+### Blog (optional)
+
+Drop markdown files (optional `title`/`date`/`summary` frontmatter) into the directory named by `BLOG_DIR` (default `content/blog`, typically a mounted volume so posts stay deployment-specific). Posts render at `/blog` and `/blog/{slug}`; the nav "Blog" link only appears when at least one post is present.
 
 ## Stack
 
-- Python 3.13, FastAPI, Jinja2 templates, HTMX
-- PostgreSQL (game state only; vault data is read via mcp-phish)
-- Docker, multi-stage build, Tailscale/LAN only through Phase 5
-
-## Reading vault data
-
-The game never touches the phish-vault Postgres directly. Every vault read
-goes through the [mcp-phish](https://github.com/pete-builds/mcp-phish) HTTP
-endpoint at `http://mcp-phish:3705/mcp` (MCP Streamable HTTP, JSON-RPC).
-A small async wrapper in `src/setlist_stash/mcp_client.py` calls the 14 tools
-exposed by mcp-phish.
-
-## Phase 4 plan
-
-See `PHASE-4-PLAN.md` for the full design: data model, scoring formula,
-showtime lock policy, auto-resolve cron, auth flow, and the verification
-checklist.
+- Python 3.13, FastAPI, Jinja2, HTMX
+- PostgreSQL (game state only; setlist data is read via the MCP server)
+- Docker, multi-stage build; mypy-strict, Trivy-scanned in CI
+- Deployable LAN-only, over Tailscale, or publicly (e.g. a Cloudflare Tunnel)
 
 ## Run locally
 
 ```bash
 cp .env.example .env
-# edit .env: set PG_PASSWORD and (eventually) MCP_PHISH_URL
+# edit .env: set PG_PASSWORD and MCP_PHISH_URL (your MCP data server)
 docker compose up -d
 curl http://localhost:3706/healthz
 ```
@@ -69,7 +64,4 @@ MIT — see [LICENSE](./LICENSE).
 
 ## Attribution
 
-This project consumes data from
-[phish.net](https://phish.net) and [phish.in](https://phish.in) via the
-[mcp-phish](https://github.com/pete-builds/mcp-phish) server. Not affiliated
-with phish.net, phish.in, or Phish.
+This project consumes setlist data through MCP servers. The Phish deployment uses data from [phish.net](https://phish.net) and [phish.in](https://phish.in) via mcp-phish; the Umphrey's deployment uses [All Things Umphreys](https://allthings.umphreys.com) via mcp-umphreys. Not affiliated with those data sources or with the artists.

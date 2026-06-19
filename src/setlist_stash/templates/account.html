@@ -8,23 +8,30 @@
 
   <div class="card">
     <p>Handle: <strong>{{ current_user.handle }}</strong></p>
-    {% if status.verified %}
-      <p>Email: <strong>{{ status.masked }}</strong> <span class="me-tag">verified</span></p>
-      <p class="muted">
-        You can sign in from a new browser by entering this email at
-        <a href="/auth/login">/auth/login</a>.
-      </p>
-      <p><a class="btn" href="/auth/email">Change email</a></p>
-    {% elif status.pending %}
-      <p>Email: <strong>{{ status.masked }}</strong> (pending verification)</p>
-      <p class="muted">Check your inbox for the verification link.</p>
-      <p><a class="btn" href="/auth/email">Resend or change email</a></p>
+    {% if email_enabled %}
+      {% if status.verified %}
+        <p>Email: <strong>{{ status.masked }}</strong> <span class="me-tag">verified</span></p>
+        <p class="muted">
+          You can sign in from a new browser by entering this email at
+          <a href="/auth/login">/auth/login</a>.
+        </p>
+        <p><a class="btn" href="/auth/email">Change email</a></p>
+      {% elif status.pending %}
+        <p>Email: <strong>{{ status.masked }}</strong> (pending verification)</p>
+        <p class="muted">Check your inbox for the verification link.</p>
+        <p><a class="btn" href="/auth/email">Resend or change email</a></p>
+      {% else %}
+        <p>Email: <em>none</em></p>
+        <p class="muted">
+          Your handle is anonymous-only. Add an email to claim it across browsers.
+        </p>
+        <p><a class="btn" href="/auth/email">Add email</a></p>
+      {% endif %}
     {% else %}
-      <p>Email: <em>none</em></p>
       <p class="muted">
-        Your handle is anonymous-only. Add an email to claim it across browsers.
+        Your handle is anonymous-only. Keep playing from this browser; your
+        picks and leagues stay tied to this handle.
       </p>
-      <p><a class="btn" href="/auth/email">Add email</a></p>
     {% endif %}
   </div>
 
@@ -49,8 +56,4 @@
     </div>
   {% endif %}
 
-  <p class="muted">
-    Phase 4b. Tailscale/LAN only. Magic links work only from a device on your
-    tailnet.
-  </p>
 {% endblock %}

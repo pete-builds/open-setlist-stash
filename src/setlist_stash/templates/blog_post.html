@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ post.title }} - {{ site_name }}{% endblock %}
+{% block content %}
+  <article class="post">
+    <header class="post-header">
+      <h1>{{ post.title }}</h1>
+      <div class="post-meta">{{ post.date.strftime('%B %-d, %Y') }}</div>
+    </header>
+    <div class="post-body">
+      {{ post.body_html | safe }}
+    </div>
+    <p class="post-back"><a href="/blog">&larr; All posts</a></p>
+  </article>
+{% endblock %}

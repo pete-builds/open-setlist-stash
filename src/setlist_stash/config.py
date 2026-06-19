@@ -27,6 +27,20 @@ class Settings(BaseSettings):
     # Path under /static/ to an additional CSS file loaded after style.css.
     # Empty disables; e.g. "themes/lot-poster.css" loads the bundled Lot Poster look.
     theme_file: str = Field(default="")
+    # Optional deployment credit shown in the footer (e.g. "A Brooks New Media
+    # Production"). Empty (default) hides the credit line entirely so a third
+    # party who self-hosts the OSS image sees no operator branding.
+    footer_credit: str = Field(default="")
+    # Optional URL the footer credit links to. Only used when footer_credit is
+    # set; if empty the credit renders as plain text.
+    footer_credit_url: str = Field(default="")
+    # Directory the blog engine reads ``*.md`` posts from. Deployment-specific:
+    # the content is NOT in the image, it's bind-mounted here per deployment
+    # (same pattern as THEME_FILE). With nothing mounted the dir is missing,
+    # the blog shows no posts, and the nav "Blog" link does not render — so the
+    # Phish demo and any third-party self-host stay clean. Absolute path inside
+    # the container; the OSS default is an empty mount point.
+    blog_dir: str = Field(default="/app/content/blog")
 
     # --- HTTP server ---
     app_host: str = Field(default="0.0.0.0")

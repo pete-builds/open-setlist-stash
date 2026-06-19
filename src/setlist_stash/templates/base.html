@@ -10,9 +10,9 @@
   {% if theme_file and "lot-poster" in theme_file %}
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Honk&family=Anton&family=Special+Elite&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
   {% endif %}
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
   {% if theme_file %}
-  <link rel="stylesheet" href="/static/{{ theme_file }}">
+  <link rel="stylesheet" href="/static/{{ theme_file }}?v={{ asset_version }}">
   {% endif %}
   <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
 </head>
@@ -24,10 +24,13 @@
     {% endif %}
     <nav>
       <a href="/leaderboard">Leaderboard</a>
+      {% if has_blog %}
+        <a href="/blog">Blog</a>
+      {% endif %}
       {% if current_user %}
         <a href="/leagues">Leagues</a>
         <a href="/account">Account</a>
-      {% else %}
+      {% elif email_enabled %}
         <a href="/auth/login">Sign in</a>
       {% endif %}
     </nav>
@@ -36,7 +39,20 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="footer">
-    <small>Phase 4 build. Tailscale/LAN only. v{{ version }}.</small>
+    <small>
+      <a href="https://github.com/pete-builds/open-setlist-stash">Open Setlist Stash</a>
+      is open source (MIT) &middot;
+      <a href="https://github.com/pete-builds/open-setlist-stash">Host your own</a> &middot;
+      v{{ version }}
+      {% if footer_credit %}
+        <br>
+        {% if footer_credit_url %}
+          <a href="{{ footer_credit_url }}">{{ footer_credit }}</a>
+        {% else %}
+          {{ footer_credit }}
+        {% endif %}
+      {% endif %}
+    </small>
   </footer>
 </body>
 </html>

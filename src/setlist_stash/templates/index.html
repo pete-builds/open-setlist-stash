@@ -45,10 +45,12 @@
         <button type="submit" class="btn">Start playing</button>
       </fieldset>
     </form>
+    {% if email_enabled %}
     <p class="muted">
       Already have a handle attached to an email?
       <a href="/auth/login">Sign in by email</a>.
     </p>
+    {% endif %}
   {% endif %}
 
   <section class="card" id="how-it-works" style="margin-top:1.5rem;">

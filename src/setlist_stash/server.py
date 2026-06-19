@@ -14,6 +14,7 @@ email, post-lock assist views. See PHASE-4-PLAN.md §9.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -48,6 +49,7 @@ from setlist_stash.auth_email import (
     request_login_link,
     verify_token,
 )
+from setlist_stash.blog import get_post, load_posts
 from setlist_stash.config import Settings, get_settings
 from setlist_stash.db import close_pool, get_pool, init_pool
 from setlist_stash.email import EmailProvider, EmailSendError, build_provider
@@ -101,6 +103,27 @@ logger = logging.getLogger("setlist_stash.server")
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
 _STATIC_DIR = _PACKAGE_DIR / "static"
+
+
+def _compute_asset_version(theme_file: str = "") -> str:
+    """Short content hash of the CSS, for cache-busting ``?v=`` query stamps.
+
+    Hashes the bytes of ``style.css`` plus the active theme file (named by
+    ``THEME_FILE``, under the static dir) when present. Missing files are
+    skipped gracefully so this never crashes the app. The value only changes
+    when a CSS file's content changes, so Cloudflare/browsers fetch a fresh
+    object after a styling deploy while older URLs stay cached but unreferenced.
+    """
+    h = hashlib.sha256()
+    paths = [_STATIC_DIR / "style.css"]
+    if theme_file:
+        paths.append(_STATIC_DIR / theme_file)
+    for path in paths:
+        try:
+            h.update(path.read_bytes())
+        except OSError:
+            continue
+    return h.hexdigest()[:8]
 
 
 def _gap_label(gap: Any) -> str:
@@ -158,6 +181,22 @@ def build_app(
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.globals["site_name"] = cfg.site_name
     templates.env.globals["theme_file"] = cfg.theme_file
+    # Content hash of the CSS, appended as ``?v=`` to the static stylesheet
+    # links so a styling change is a fresh URL at the Cloudflare edge.
+    templates.env.globals["asset_version"] = _compute_asset_version(cfg.theme_file)
+    templates.env.globals["footer_credit"] = cfg.footer_credit
+    templates.env.globals["footer_credit_url"] = cfg.footer_credit_url
+    # Whether the email/magic-link signup UI should render at all. Off when the
+    # provider is disabled (default), so the email entry points disappear for
+    # any deployment without email configured.
+    templates.env.globals["email_enabled"] = provider.name != "disabled"
+    # Whether to render the nav "Blog" link. True only when the bind-mounted
+    # BLOG_DIR holds at least one parseable post. Empty/missing dir (the Phish
+    # demo, third-party self-host) leaves the link off entirely. Evaluated at
+    # build time: content is mounted before the container starts, so a fresh
+    # post needs a container recreate to appear (cheap, and matches the theme
+    # mount lifecycle).
+    templates.env.globals["has_blog"] = len(load_posts(cfg.blog_dir)) > 0
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -1481,6 +1520,50 @@ def build_app(
         if flash:
             resp.delete_cookie("phishgame_flash")
         return resp
+
+    # ----- blog (deployment-specific content, mounted at BLOG_DIR) ----------
+
+    @app.get("/blog", response_class=HTMLResponse)
+    async def blog_index(request: Request) -> HTMLResponse:
+        """List published posts, newest first.
+
+        Reads from the bind-mounted ``BLOG_DIR``. Empty/missing dir renders an
+        empty list (no crash), and the nav link is already hidden in that case.
+        """
+        user = await _resolve_user(request)
+        posts = load_posts(cfg.blog_dir)
+        return _render(
+            request,
+            "blog_index.html",
+            current_user=user,
+            posts=posts,
+        )
+
+    @app.get("/blog/{slug}", response_class=HTMLResponse)
+    async def blog_post(request: Request, slug: str) -> Response:
+        """Render one post. The slug is validated against the known post files
+        (``get_post`` returns None for anything not in BLOG_DIR), so there is
+        no path traversal and unknown slugs 404.
+        """
+        user = await _resolve_user(request)
+        post = get_post(cfg.blog_dir, slug)
+        if post is None:
+            resp = _render(
+                request,
+                "auth_verify_error.html",
+                current_user=user,
+                message="That post doesn't exist.",
+                ttl_hours=cfg.magic_link_ttl_hours,
+                signed_in=user is not None,
+            )
+            resp.status_code = status.HTTP_404_NOT_FOUND
+            return resp
+        return _render(
+            request,
+            "blog_post.html",
+            current_user=user,
+            post=post,
+        )
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:

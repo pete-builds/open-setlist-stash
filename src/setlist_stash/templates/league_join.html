@@ -23,7 +23,7 @@
       <h2>Sign in to join</h2>
       <p>
         Pick a handle to join <strong>{{ league.name }}</strong>.
-        Anonymous handles are fine — verified email is optional.
+        Anonymous handles are fine.
       </p>
       <form method="post" action="/handle">
         <label for="handle">Handle</label>
@@ -32,10 +32,12 @@
         <input type="hidden" name="next" value="/league/{{ league.slug }}">
         <button type="submit" class="btn">Create handle &amp; continue</button>
       </form>
+      {% if email_enabled %}
       <p class="muted">
         Already have a handle attached to an email?
         <a href="/auth/login">Sign in by email</a> first, then come back to this URL.
       </p>
+      {% endif %}
     </div>
   {% else %}
     <div class="card">
