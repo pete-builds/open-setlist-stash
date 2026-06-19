@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # Optional URL the footer credit links to. Only used when footer_credit is
     # set; if empty the credit renders as plain text.
     footer_credit_url: str = Field(default="")
+    # Google Analytics 4 measurement ID (e.g. "G-XXXXXXXXXX"). Deployment-level
+    # override: when set, every page renders the gtag.js snippet; when empty
+    # (the default) NO analytics tag renders at all, so the OSS image and any
+    # third-party self-host stay clean. Never bake a real ID into the repo —
+    # set it per deployment via the ANALYTICS_ID env var (oss-platform-split).
+    analytics_id: str = Field(default="")
     # Directory the blog engine reads ``*.md`` posts from. Deployment-specific:
     # the content is NOT in the image, it's bind-mounted here per deployment
     # (same pattern as THEME_FILE). With nothing mounted the dir is missing,

@@ -186,6 +186,10 @@ def build_app(
     templates.env.globals["asset_version"] = _compute_asset_version(cfg.theme_file)
     templates.env.globals["footer_credit"] = cfg.footer_credit
     templates.env.globals["footer_credit_url"] = cfg.footer_credit_url
+    # GA4 measurement ID. Empty (default) renders no analytics tag at all, so
+    # the OSS image / third-party self-host stay clean. Set per deployment via
+    # the ANALYTICS_ID env var; base.html guards the gtag snippet on it.
+    templates.env.globals["analytics_id"] = cfg.analytics_id
     # Whether the email/magic-link signup UI should render at all. Off when the
     # provider is disabled (default), so the email entry points disappear for
     # any deployment without email configured.
