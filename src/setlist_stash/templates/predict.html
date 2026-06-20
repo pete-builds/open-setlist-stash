@@ -12,9 +12,15 @@
       (<span id="lock-countdown" data-lock-at="{{ lock.lock_at_iso }}">{{ lock.seconds_until_lock }}s</span> from now).
     </p>
     <p>
+      {% if enable_games %}
       <button type="button" class="btn" id="share-btn"
-              data-share-title="Make your picks: {{ show.venue_name or show.show_date }}"
-              data-share-text="Make your picks for {% if show.venue_name %}{{ show.venue_name }} {% endif %}{{ show.show_date }}: picks lock at {{ lock.lock_at_display }}">Share / Copy link</button>
+              data-share-title="Join my {{ site_name }} game"
+              data-share-text="I'm picking the setlist for {% if show.venue_name %}{{ show.venue_name }} {% endif %}{{ show.show_date }} on {{ site_name }}. Join my game and watch the scoreboard:">Share my game</button>
+      {% else %}
+      <button type="button" class="btn" id="share-btn"
+              data-share-title="{{ site_name }}"
+              data-share-text="I'm picking the setlist for {% if show.venue_name %}{{ show.venue_name }} {% endif %}{{ show.show_date }} on {{ site_name }}. Make your picks:">Share / copy link</button>
+      {% endif %}
     </p>
   {% endif %}
 
@@ -352,20 +358,56 @@
       })();
     </script>
 
+    {% if enable_games %}
     <script>
-      // Share this predict page. Uses the shared ossShare helper (base.html):
-      // native share sheet on phones, clipboard/execCommand copy on desktop.
+      // "Share my game". The share link IS a game: we ask the server for the
+      // caller's game invite (auto-creating one if they have none), then hand
+      // that URL to the shared ossShare helper (native share sheet / copy).
+      // If the server can't mint a game (e.g. not signed in, or offline), we
+      // fall back to sharing the current predict page so the click never dies.
       (function () {
         var btn = document.getElementById('share-btn');
         if (!btn) return;
         btn.addEventListener('click', function () {
+          var fallback = window.location.href;
+          fetch('/game/start', { method: 'POST', headers: { 'Accept': 'application/json' } })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (data) {
+              var url = (data && data.invite_url) ? data.invite_url : fallback;
+              window.ossShare(btn, {
+                url: url,
+                title: btn.dataset.shareTitle,
+                text: btn.dataset.shareText
+              });
+            })
+            .catch(function () {
+              window.ossShare(btn, {
+                url: fallback,
+                title: btn.dataset.shareTitle,
+                text: btn.dataset.shareText
+              });
+            });
+        });
+      })();
+    </script>
+    {% else %}
+    <script>
+      // Single-board mode (games disabled): no per-user game to mint. The
+      // Share button just shares the site's home URL via the ossShare helper
+      // (native share sheet on phones, clipboard/execCommand copy on desktop).
+      (function () {
+        var btn = document.getElementById('share-btn');
+        if (!btn) return;
+        var url = new URL('/', window.location.origin).href;
+        btn.addEventListener('click', function () {
           window.ossShare(btn, {
-            url: window.location.href,
+            url: url,
             title: btn.dataset.shareTitle,
             text: btn.dataset.shareText
           });
         });
       })();
     </script>
+    {% endif %}
   {% endif %}
 {% endblock %}

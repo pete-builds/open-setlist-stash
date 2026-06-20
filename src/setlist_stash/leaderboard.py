@@ -456,6 +456,54 @@ async def fetch_leaderboard(
     ]
 
 
+async def list_show_entrants(
+    pool: asyncpg.Pool[Any],
+    show_date: Any,
+    *,
+    limit: int = 50,
+) -> list[LeaderboardRow]:
+    """List the players who've entered a show, all at score 0.
+
+    Used to populate the global leaderboard *before* any scores land: rather
+    than a bare "No scores yet" panel, the page lists everyone who has a
+    prediction for the target show at 0 (same spirit as the league
+    scoreboard's pre-show zeros). Ordered by earliest submitter first so the
+    list is stable across refreshes.
+
+    Fair-play: this returns only handles at 0 — never anyone's picks. Safe to
+    show pre-lock. The ``rank`` is the 1-based position in submit order;
+    ``shows_played`` is 0 (this entry isn't a scored show yet) and
+    ``refreshed_at`` is ``now()`` so the row shape matches ``LeaderboardRow``.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT u.handle, p.submitted_at, p.user_id
+              FROM predictions p
+              JOIN users u ON u.id = p.user_id
+             WHERE p.show_date = $1
+             ORDER BY p.submitted_at ASC, u.handle ASC
+             LIMIT $2
+            """,
+            show_date,
+            limit,
+        )
+    now = datetime.now()
+    return [
+        LeaderboardRow(
+            scope="entrants",
+            scope_key=str(show_date),
+            user_id=int(r["user_id"]),
+            handle=str(r["handle"]),
+            total_score=0,
+            shows_played=0,
+            rank=i,
+            refreshed_at=now,
+        )
+        for i, r in enumerate(rows, start=1)
+    ]
+
+
 async def fetch_user_rank(
     pool: asyncpg.Pool[Any],
     scope: str,

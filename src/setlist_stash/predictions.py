@@ -138,3 +138,21 @@ async def get_user_prediction(
         submitted_at=row["submitted_at"],
         score=row["score"],
     )
+
+
+async def count_entrants(pool: asyncpg.Pool[Any], show_date: date) -> int:
+    """Return how many players have submitted a prediction for a show.
+
+    The ``(user_id, show_date)`` UNIQUE constraint means one row per player,
+    so a plain ``COUNT(*)`` is the distinct-player count. This is fair-play
+    safe to surface pre-lock: it reveals only *how many* people are in, never
+    who they are or what they picked.
+    """
+    async with pool.acquire() as conn:
+        return int(
+            await conn.fetchval(
+                "SELECT COUNT(*) FROM predictions WHERE show_date = $1",
+                show_date,
+            )
+            or 0
+        )

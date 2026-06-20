@@ -260,6 +260,24 @@ class McpPhishClient:
             )
         return rows
 
+    async def stats_overview(self, top_n: int = 10) -> dict[str, Any]:
+        """Catalog-wide statistics roll-up.
+
+        Returns a single dict with headline counts (total_shows,
+        avg_songs_per_show, etc.) plus ranked lists (most_played,
+        biggest_gaps, rarest_songs, recent_debuts, longest_shows). Powers the
+        public ``/stats`` page. The upstream tool is Umphrey's-specific; a
+        deployment whose MCP omits it (e.g. the Phish demo) raises
+        ``McpPhishError``, and the route degrades to a "stats unavailable"
+        panel rather than crashing.
+        """
+        result = await self._call_tool("stats_overview", {"top_n": top_n})
+        if not isinstance(result, dict):
+            raise McpPhishError(
+                f"stats_overview: unexpected shape {type(result).__name__}"
+            )
+        return result
+
     async def validate_song_slugs(self, slugs: list[str]) -> set[str]:
         """Return the subset of ``slugs`` that correspond to real songs.
 

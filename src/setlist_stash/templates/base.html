@@ -25,6 +25,7 @@
   <link rel="stylesheet" href="/static/{{ theme_file }}?v={{ asset_version }}">
   {% endif %}
   <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+  {% block head_extra %}{% endblock %}
 </head>
 <body>
   <header class="topbar">
@@ -32,13 +33,22 @@
     {% if current_user %}
       <span class="handle">handle: <strong>{{ current_user.handle }}</strong></span>
     {% endif %}
-    <nav>
+    <button type="button" class="nav-toggle" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+      <span class="nav-toggle-bars" aria-hidden="true"></span>
+    </button>
+    <nav id="site-nav">
       <a href="/leaderboard">Leaderboard</a>
+      <a href="/shows">Past shows</a>
+      <a href="/stats">Stats</a>
+      <a href="/about">About</a>
+      {% if has_mcp %}
+        <a href="/connect">Connect</a>
+      {% endif %}
       {% if has_blog %}
         <a href="/blog">Blog</a>
       {% endif %}
       {% if current_user %}
-        <a href="/leagues">Leagues</a>
+        {% if enable_games %}<a href="/leagues">Games</a>{% endif %}
         <a href="/account">Account</a>
       {% elif email_enabled %}
         <a href="/auth/login">Sign in</a>
@@ -49,21 +59,75 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="footer">
-    <small>
-      <a href="https://github.com/pete-builds/open-setlist-stash">Open Setlist Stash</a>
-      is open source (MIT) &middot;
-      <a href="https://github.com/pete-builds/open-setlist-stash">Host your own</a> &middot;
-      v{{ version }}
-      {% if footer_credit %}
-        <br>
+    <div class="footer-cols">
+      <div class="footer-col">
+        <h4>Play</h4>
+        {% if current_user and upcoming_show %}
+          <a href="/predict/{{ upcoming_show.show_date }}">Make picks</a>
+        {% else %}
+          <a href="/">Make picks</a>
+        {% endif %}
+        <a href="/leaderboard">Leaderboard</a>
+        <a href="/shows">Past shows</a>
+      </div>
+      <div class="footer-col">
+        <h4>Explore</h4>
+        <a href="/stats">Stats</a>
+        <a href="/about">About</a>
+        {% if has_mcp %}<a href="/connect">Connect (MCP)</a>{% endif %}
+        {% if has_blog %}<a href="/blog">Blog</a>{% endif %}
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <a href="https://github.com/pete-builds/open-setlist-stash">Source on GitHub</a>
+        <a href="https://github.com/pete-builds/open-setlist-stash">Open source (MIT)</a>
+        <a href="https://github.com/pete-builds/open-setlist-stash">Host your own</a>
+        {% if has_mcp %}<a href="/connect">Use the data API</a>{% endif %}
+        <span class="footer-version">v{{ version }}</span>
+      </div>
+    </div>
+    {% if footer_credit %}
+    <div class="footer-credit">
+      <small>
         {% if footer_credit_url %}
           <a href="{{ footer_credit_url }}">{{ footer_credit }}</a>
         {% else %}
           {{ footer_credit }}
         {% endif %}
-      {% endif %}
-    </small>
+      </small>
+    </div>
+    {% endif %}
   </footer>
+  <script>
+    // Mobile nav toggle. Vanilla JS, no deps. The nav-toggle button is only
+    // visible at the mobile breakpoint (CSS); on desktop the nav is always
+    // shown and this handler is a harmless no-op. Accessible: toggles
+    // aria-expanded, closes on link click / Escape, button is a real <button>
+    // so it's keyboard-focusable.
+    (function () {
+      var btn = document.querySelector('.nav-toggle');
+      var nav = document.getElementById('site-nav');
+      if (!btn || !nav) { return; }
+      function setOpen(open) {
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        nav.classList.toggle('nav-open', open);
+      }
+      btn.addEventListener('click', function () {
+        setOpen(btn.getAttribute('aria-expanded') !== 'true');
+      });
+      // Close when a nav link is tapped (so the panel doesn't linger).
+      nav.addEventListener('click', function (e) {
+        if (e.target.closest('a')) { setOpen(false); }
+      });
+      // Close on Escape, return focus to the button.
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && btn.getAttribute('aria-expanded') === 'true') {
+          setOpen(false);
+          btn.focus();
+        }
+      });
+    })();
+  </script>
   <script>
     // Shared share/copy helper. Vanilla JS, no deps. Exposed as a global so
     // any page (predict, show, league invite) can wire a button to it.

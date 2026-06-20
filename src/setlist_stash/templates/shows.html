@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Past shows — {{ site_name }}{% endblock %}
+{% block content %}
+  <h1>Past shows</h1>
+  <p class="muted">Every show with picks. Tap a row for its leaderboard.</p>
+
+  {% if shows %}
+    <div class="leaderboard-wrap">
+      <table class="leaderboard">
+        <thead>
+          <tr>
+            <th>Show</th>
+            <th>Venue</th>
+            <th class="num">Players</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in shows %}
+            <tr>
+              <td><a href="/show/{{ s.show_date }}/predictions">{{ s.show_date }}</a></td>
+              <td class="muted">{{ s.venue or '-' }}</td>
+              <td class="num">{{ s.entrants }}</td>
+              <td class="muted">{% if s.resolved %}Final{% else %}Open{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">No shows yet.</p>
+  {% endif %}
+{% endblock %}

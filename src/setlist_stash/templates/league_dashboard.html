@@ -3,8 +3,8 @@
 {% block content %}
   <h1>{{ league.name }}</h1>
   <p class="muted">
-    {{ member_count }} member{% if member_count != 1 %}s{% endif %}
-    &middot; <code>/league/{{ league.slug }}</code>
+    {{ member_count }} player{% if member_count != 1 %}s{% endif %}
+    &middot; <code>/game/{{ league.slug }}</code>
     {% if is_host %}<span class="me-tag">host</span>{% endif %}
     {% if league.start_date or league.end_date %}
       &middot; Tour window:
@@ -17,7 +17,7 @@
   {% endif %}
 
   <p>
-    <a class="btn" href="/league/{{ league.slug }}/leaderboard">Leaderboard</a>
+    <a class="btn" href="/league/{{ league.slug }}/leaderboard">Scoreboard</a>
     {% if upcoming_show %}
       <a class="btn" href="/predict/{{ upcoming_show.show_date }}">Predict next show</a>
     {% endif %}
@@ -29,15 +29,15 @@
   <h2>Invite link</h2>
   <div class="card">
     <p>
-      Share this URL with friends. Anyone with the link can join (up to
-      {{ league.member_cap }} members).
+      Share this link with friends. Anyone who opens it joins the game and
+      lands on the same scoreboard (up to {{ league.member_cap }} players).
     </p>
     <p><code id="invite-url">{{ invite_url }}</code></p>
     <p>
       <button type="button" class="btn" id="invite-copy-btn"
               data-share-url="{{ invite_url }}"
-              data-share-title="Join my league: {{ league.name }}"
-              data-share-text="Join my setlist-picks league on {{ site_name }}.">Copy invite link</button>
+              data-share-title="Join my {{ site_name }} game: {{ league.name }}"
+              data-share-text="Join my setlist-picks game on {{ site_name }} and watch the scoreboard:">Share / copy invite</button>
     </p>
     <script>
       // Copy / share the league invite link. Uses the shared ossShare helper.
@@ -55,14 +55,14 @@
     </script>
     {% if is_host %}
       <p class="muted">
-        Need a fresh URL? <a href="/league/{{ league.slug }}/settings">Rotate the slug</a>
-        from settings. The old URL will stop working immediately; existing
-        members keep their spots.
+        Need a fresh link? <a href="/league/{{ league.slug }}/settings">Rotate the invite</a>
+        from settings. The old link stops working immediately; existing
+        players keep their spots.
       </p>
     {% endif %}
   </div>
 
-  <h2>Members</h2>
+  <h2>Players</h2>
   {% if members %}
     <ul class="member-list">
       {% for m in members %}
@@ -73,14 +73,14 @@
       {% endfor %}
     </ul>
   {% else %}
-    <p class="muted">No members yet.</p>
+    <p class="muted">No players yet.</p>
   {% endif %}
 
   {% if not is_host %}
-    <h2>Leave league</h2>
+    <h2>Leave game</h2>
     <form method="post" action="/league/{{ league.slug }}/leave"
-          onsubmit="return confirm('Leave {{ league.name }}? You can rejoin from the same URL later.');">
-      <button type="submit" class="btn">Leave league</button>
+          onsubmit="return confirm('Leave {{ league.name }}? You can rejoin from the same link later.');">
+      <button type="submit" class="btn">Leave game</button>
     </form>
   {% endif %}
 {% endblock %}

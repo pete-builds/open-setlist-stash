@@ -1,63 +1,92 @@
 {% extends "base.html" %}
-{% block title %}{{ league.name }} — leaderboard{% endblock %}
+{% block title %}{{ league.name }} — scoreboard{% endblock %}
+{% block head_extra %}
+  {# Light live refresh so scores climb during the show without a manual
+     reload. Cheap, dependency-free, and harmless pre-show (re-renders zeros). #}
+  <meta http-equiv="refresh" content="30">
+{% endblock %}
 {% block content %}
-  <h1>{{ league.name }} — leaderboard</h1>
+  <h1>{{ league.name }} — scoreboard</h1>
   <p class="muted">
-    Private league &middot; {{ member_count }} member{% if member_count != 1 %}s{% endif %}
-    &middot; <a href="/league/{{ league.slug }}">League home</a>
+    Your game &middot; {{ member_count }} player{% if member_count != 1 %}s{% endif %}
+    &middot; <a href="/league/{{ league.slug }}">Game home</a>
     {% if league.start_date or league.end_date %}
       &middot; Tour window:
       {{ league.start_date or 'open' }} to {{ league.end_date or 'open' }}
     {% endif %}
   </p>
 
-  <div id="leaderboard-table" class="leaderboard-wrap">
-    {% if not rows %}
-      <div class="card">
-        <h2>No scores yet</h2>
-        <p class="muted">
-          League leaderboards refresh after each resolver tick that scores
-          at least one show. Once your members start submitting picks and
-          the resolver runs, you'll see standings here.
-        </p>
-      </div>
+  <p class="make-picks-cta">
+    {% if viewer_is_member %}
+      {% if upcoming_date %}
+        <a class="btn btn-primary btn-lg" href="/predict/{{ upcoming_date }}">🎸 Make your picks</a>
+      {% endif %}
     {% else %}
+      <a class="btn btn-primary btn-lg" href="/game/{{ league.slug }}">🎸 Join &amp; make your picks</a>
+    {% endif %}
+  </p>
+
+  {% if invite_url %}
+    <div class="card">
+      <p>Invite more players — anyone who opens this link joins this scoreboard:</p>
+      <p><code id="invite-url">{{ invite_url }}</code></p>
+      <p>
+        <button type="button" class="btn" id="scoreboard-invite-btn"
+                data-share-url="{{ invite_url }}"
+                data-share-title="Join my {{ site_name }} game"
+                data-share-text="Join my game on {{ site_name }} and watch the scoreboard:">Share / copy invite</button>
+      </p>
+    </div>
+    <script>
+      (function () {
+        var btn = document.getElementById('scoreboard-invite-btn');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+          window.ossShare(btn, {
+            url: btn.dataset.shareUrl,
+            title: btn.dataset.shareTitle,
+            text: btn.dataset.shareText
+          });
+        });
+      })();
+    </script>
+  {% endif %}
+
+  <div id="leaderboard-table" class="leaderboard-wrap">
+    {% if member_scores %}
       <table class="leaderboard">
         <thead>
           <tr>
-            <th class="num">Rank</th>
-            <th>Handle</th>
+            <th class="num">#</th>
+            <th>Player</th>
             <th class="num">Score</th>
-            <th class="num">Shows</th>
-            <th>Refreshed</th>
           </tr>
         </thead>
         <tbody>
-          {% for row in rows %}
-            <tr {% if current_user and current_user.handle == row.handle %}class="is-me"{% endif %}>
-              <td class="num">#{{ row.rank }}</td>
-              <td><a href="/u/{{ row.handle }}">{{ row.handle }}</a>{% if current_user and current_user.handle == row.handle %} <span class="me-tag">you</span>{% endif %}</td>
-              <td class="num">{{ row.total_score }}</td>
-              <td class="num">{{ row.shows_played }}</td>
-              <td class="muted">{{ row.refreshed_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+          {% for m in member_scores %}
+            <tr {% if current_user and current_user.handle == m.handle %}class="is-me"{% endif %}>
+              <td class="num">{{ loop.index }}</td>
+              <td>
+                <a href="/u/{{ m.handle }}">{{ m.handle }}</a>
+                {% if m.role == 'host' %}<span class="me-tag">host</span>{% endif %}
+                {% if current_user and current_user.handle == m.handle %} <span class="me-tag">you</span>{% endif %}
+              </td>
+              <td class="num">{{ m.score }}</td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
+      <p class="muted">
+        Scores update live during the show (this page refreshes itself every
+        30 seconds). Each played pick is 2 points; a correct encore call is +5.
+      </p>
+    {% else %}
+      <div class="card">
+        <h2>No players yet</h2>
+        <p class="muted">
+          Share your invite link above. Whoever opens it joins this scoreboard.
+        </p>
+      </div>
     {% endif %}
   </div>
-
-  {% if user_row %}
-    <p class="muted">
-      Your rank in this league:
-      <strong>#{{ user_row.rank }}</strong>
-      ({{ user_row.total_score }} pts across
-      {{ user_row.shows_played }} show{% if user_row.shows_played != 1 %}s{% endif %}).
-    </p>
-  {% endif %}
-
-  <p class="muted">
-    Same picks, multiple leaderboards. Predictions count globally and
-    inside every league you've joined.
-  </p>
 {% endblock %}

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Stats — {{ site_name }}{% endblock %}
+{% block content %}
+  <h1>Stats</h1>
+
+  {% if stats %}
+    <p class="muted">
+      The whole catalog at a glance, straight from the setlist vault.
+      {% if stats.first_show_date %}Tracking shows from {{ stats.first_show_date }}{% if stats.last_show_date %} through {{ stats.last_show_date }}{% endif %}.{% endif %}
+    </p>
+
+    <div class="stat-grid">
+      <div class="stat-card">
+        <span class="stat-value">{{ stats.total_shows }}</span>
+        <span class="stat-label">Shows tracked</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ stats.avg_songs_per_show }}</span>
+        <span class="stat-label">Avg songs / show</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ stats.distinct_songs_played }}</span>
+        <span class="stat-label">Songs ever played</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ stats.total_performances }}</span>
+        <span class="stat-label">Total performances</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ stats.total_songs_tracked }}</span>
+        <span class="stat-label">Songs in catalog</span>
+      </div>
+    </div>
+
+    {% if stats.most_played %}
+    <section class="stat-section">
+      <h2>Most-played songs</h2>
+      <p class="muted">The set-list workhorses, by total times played.</p>
+      <div class="leaderboard-wrap">
+        <table class="stat-table">
+          <thead><tr><th class="stat-rank">#</th><th>Song</th><th class="num">Times played</th></tr></thead>
+          <tbody>
+            {% for s in stats.most_played %}
+              <tr>
+                <td class="stat-rank">{{ loop.index }}</td>
+                <td>{{ s.title }}</td>
+                <td class="num">{{ s.times_played }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if stats.biggest_gaps %}
+    <section class="stat-section">
+      <h2>Biggest bust-out candidates</h2>
+      <p class="muted">Songs cold the longest, by shows since they last appeared.</p>
+      <div class="leaderboard-wrap">
+        <table class="stat-table">
+          <thead><tr><th class="stat-rank">#</th><th>Song</th><th class="num">Gap (shows)</th><th class="num">Last played</th></tr></thead>
+          <tbody>
+            {% for s in stats.biggest_gaps %}
+              <tr>
+                <td class="stat-rank">{{ loop.index }}</td>
+                <td>{{ s.title }}</td>
+                <td class="num">{{ s.gap_current }}</td>
+                <td class="num muted">{{ s.last_played_date or '—' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if stats.rarest_songs %}
+    <section class="stat-section">
+      <h2>Rarest songs</h2>
+      <p class="muted">Played the fewest times across the tracked corpus.</p>
+      <div class="leaderboard-wrap">
+        <table class="stat-table">
+          <thead><tr><th class="stat-rank">#</th><th>Song</th><th class="num">Times played</th></tr></thead>
+          <tbody>
+            {% for s in stats.rarest_songs %}
+              <tr>
+                <td class="stat-rank">{{ loop.index }}</td>
+                <td>{{ s.title }}</td>
+                <td class="num">{{ s.times_played }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if stats.recent_debuts %}
+    <section class="stat-section">
+      <h2>Recent debuts</h2>
+      <p class="muted">The newest additions to the live catalog.</p>
+      <div class="leaderboard-wrap">
+        <table class="stat-table">
+          <thead><tr><th class="stat-rank">#</th><th>Song</th><th class="num">Debuted</th><th class="num">Times played</th></tr></thead>
+          <tbody>
+            {% for s in stats.recent_debuts %}
+              <tr>
+                <td class="stat-rank">{{ loop.index }}</td>
+                <td>{{ s.title }}</td>
+                <td class="num muted">{{ s.debut_date or '—' }}</td>
+                <td class="num">{{ s.times_played }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if stats.longest_shows %}
+    <section class="stat-section">
+      <h2>Longest shows</h2>
+      <p class="muted">The biggest nights, by total songs on the setlist.</p>
+      <div class="leaderboard-wrap">
+        <table class="stat-table">
+          <thead><tr><th class="stat-rank">#</th><th>Show</th><th>Venue</th><th class="num">Songs</th></tr></thead>
+          <tbody>
+            {% for sh in stats.longest_shows %}
+              <tr>
+                <td class="stat-rank">{{ loop.index }}</td>
+                <td><a href="/show/{{ sh.date }}/predictions">{{ sh.date }}</a></td>
+                <td class="muted">{{ sh.venue_name or sh.location or '—' }}</td>
+                <td class="num">{{ sh.song_count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+
+    <p class="muted" style="margin-top:2rem;">
+      Numbers come from a self-hosted setlist vault and a read-only MCP data layer.
+      {% if has_mcp %}Want to query it yourself? <a href="/connect">Connect your own MCP client</a>.{% endif %}
+    </p>
+
+  {% else %}
+    <p class="muted">Stats aren't available on this deployment right now. Check back soon.</p>
+  {% endif %}
+{% endblock %}

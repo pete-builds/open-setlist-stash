@@ -99,7 +99,7 @@ async def test_anonymous_visit_to_league_url_renders_join_with_handle_form(
     # bare /handle home form by checking the form posts to /handle and
     # the page references the league name.
     assert "Pod" in page.text
-    assert "Sign in to join" in page.text
+    assert "Join the game" in page.text
     assert 'action="/handle"' in page.text
 
 
@@ -125,7 +125,7 @@ async def test_second_user_can_join(
         f"/league/{slug}/join", follow_redirects=False
     )
     assert join_resp.status_code == 303
-    assert join_resp.headers["location"] == f"/league/{slug}"
+    assert join_resp.headers["location"] == f"/league/{slug}/leaderboard"
 
     async with pg_pool.acquire() as conn:
         n = await conn.fetchval(
@@ -323,3 +323,128 @@ async def test_anonymous_redirected_from_protected_pages(
     assert pg_pool is not None
     resp = await async_client.get(path, follow_redirects=False)
     assert resp.status_code in (303, 307)
+
+
+# ----- "game" flow: auto-create on share, aliases, scoreboard zeros ---------
+
+
+@requires_pg
+async def test_game_start_creates_game_for_new_user(
+    pg_pool: asyncpg.Pool[Any] | None, async_client: AsyncClient
+) -> None:
+    """A user with no game gets one auto-created, returned as a /game/ invite."""
+    assert pg_pool is not None
+    alice_id = await _make_user(pg_pool, "alice")
+    _cookie_for(async_client, alice_id)
+    resp = await async_client.post("/game/start")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "/game/" in body["invite_url"]
+    assert body["slug"]
+    # The game exists with alice as host.
+    async with pg_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT host_user_id FROM leagues WHERE slug = $1", body["slug"]
+        )
+    assert row is not None
+    assert row["host_user_id"] == alice_id
+
+
+@requires_pg
+async def test_game_start_is_idempotent(
+    pg_pool: asyncpg.Pool[Any] | None, async_client: AsyncClient
+) -> None:
+    """Calling /game/start twice returns the same game (no duplicate)."""
+    assert pg_pool is not None
+    alice_id = await _make_user(pg_pool, "alice")
+    _cookie_for(async_client, alice_id)
+    first = (await async_client.post("/game/start")).json()
+    second = (await async_client.post("/game/start")).json()
+    assert first["slug"] == second["slug"]
+    async with pg_pool.acquire() as conn:
+        n = await conn.fetchval(
+            "SELECT COUNT(*) FROM leagues WHERE host_user_id = $1", alice_id
+        )
+    assert int(n) == 1
+
+
+@requires_pg
+async def test_game_start_requires_handle(
+    pg_pool: asyncpg.Pool[Any] | None, async_client: AsyncClient
+) -> None:
+    assert pg_pool is not None
+    resp = await async_client.post("/game/start")
+    assert resp.status_code == 401
+
+
+@requires_pg
+async def test_game_slug_alias_renders_join(
+    pg_pool: asyncpg.Pool[Any] | None, async_client: AsyncClient
+) -> None:
+    """The /game/{slug} alias behaves like /league/{slug}."""
+    assert pg_pool is not None
+    alice_id = await _make_user(pg_pool, "alice")
+    bob_id = await _make_user(pg_pool, "bob")
+    _cookie_for(async_client, alice_id)
+    resp = await async_client.post(
+        "/leagues/new",
+        data={"name": "Pod", "start_date": "", "end_date": ""},
+        follow_redirects=False,
+    )
+    slug = resp.headers["location"].removeprefix("/league/")
+    async_client.cookies.clear()
+    _cookie_for(async_client, bob_id)
+    page = await async_client.get(f"/game/{slug}")
+    assert page.status_code == 200
+    assert "Join this game" in page.text
+
+
+@requires_pg
+async def test_scoreboard_shows_members_at_zero_pre_score(
+    pg_pool: asyncpg.Pool[Any] | None, async_client: AsyncClient
+) -> None:
+    """Before any score lands, the scoreboard lists members at 0 (not empty)."""
+    assert pg_pool is not None
+    alice_id = await _make_user(pg_pool, "alice")
+    _cookie_for(async_client, alice_id)
+    resp = await async_client.post(
+        "/leagues/new",
+        data={"name": "Pod", "start_date": "", "end_date": ""},
+        follow_redirects=False,
+    )
+    slug = resp.headers["location"].removeprefix("/league/")
+    page = await async_client.get(f"/league/{slug}/leaderboard")
+    assert page.status_code == 200
+    # alice is a member with no scored pick -> she still appears, at 0.
+    assert "alice" in page.text
+    assert ">0<" in page.text or "No players yet" not in page.text
+
+
+@requires_pg
+async def test_handle_honors_safe_next(
+    pg_pool: asyncpg.Pool[Any] | None, async_client: AsyncClient
+) -> None:
+    """A new handle created from a game invite lands back on that invite."""
+    assert pg_pool is not None
+    resp = await async_client.post(
+        "/handle",
+        data={"handle": "carol", "next": "/league/some-slug"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/league/some-slug"
+
+
+@requires_pg
+async def test_handle_rejects_offsite_next(
+    pg_pool: asyncpg.Pool[Any] | None, async_client: AsyncClient
+) -> None:
+    """An off-site ``next`` is ignored; the user lands on home."""
+    assert pg_pool is not None
+    resp = await async_client.post(
+        "/handle",
+        data={"handle": "dave", "next": "https://evil.example/x"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/"

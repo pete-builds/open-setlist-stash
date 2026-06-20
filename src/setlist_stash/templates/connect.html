@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Connect the MCP — {{ site_name }}{% endblock %}
+{% block content %}
+  <h1>Connect the data API</h1>
+
+  {% if has_mcp %}
+    {% set subject = mcp_subject or "the band's" %}
+    <p class="muted">
+      {{ site_name }} runs on a read-only <strong>Model Context Protocol (MCP)</strong> server over {{ subject }} setlist data. Point any MCP client at it and ask questions in plain language: search songs, find bust-out candidates, pull a show's full setlist, or trace a song's history.
+    </p>
+
+    <section class="card">
+      <h2>The endpoint</h2>
+      <p>It's a <strong>Streamable HTTP</strong> MCP server. No auth, read-only, rate-limited.</p>
+      <div class="code-block"><code>{{ mcp_public_url }}</code></div>
+    </section>
+
+    <section class="card">
+      <h2>Claude Code (CLI)</h2>
+      <p>One command adds it to your user config:</p>
+      <div class="code-block"><code>claude mcp add -t http -s user umphreys {{ mcp_public_url }}</code></div>
+      <p class="muted">Then start a session and ask, e.g. "what Umphrey's songs are overdue for a bust-out?"</p>
+    </section>
+
+    <section class="card">
+      <h2>Claude Desktop</h2>
+      <p>Add a remote (HTTP) server to your <code>claude_desktop_config.json</code>:</p>
+      <div class="code-block"><code>{
+  "mcpServers": {
+    "umphreys": {
+      "type": "http",
+      "url": "{{ mcp_public_url }}"
+    }
+  }
+}</code></div>
+      <p class="muted">Restart Claude Desktop and the tools appear under the plug icon.</p>
+    </section>
+
+    <section class="card">
+      <h2>Any MCP client</h2>
+      <p>
+        It speaks the current MCP spec over Streamable HTTP. Configure your client with the transport set to <strong>HTTP</strong> and the URL above. No headers or tokens required.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Available tools</h2>
+      <ul class="tool-list">
+        <li><code>search_songs</code> — find songs by title; returns play counts and current gap.</li>
+        <li><code>get_song</code> — one song's record: debut, last play, total plays, current gap.</li>
+        <li><code>songs_by_gap</code> — songs ranked by shows since last play (bust-out radar).</li>
+        <li><code>song_history</code> — every performance of a song, most recent first.</li>
+        <li><code>recent_shows</code> — the latest shows, newest first.</li>
+        <li><code>get_show</code> — a single show with its full setlist and venue.</li>
+        <li><code>venue_history</code> — every show played at a given venue.</li>
+        <li><code>jam_chart</code> — editorially flagged notable jams.</li>
+        <li><code>appearances</code> — guest sit-ins, by guest or by show.</li>
+        <li><code>stats_overview</code> — catalog-wide roll-up (also powers the <a href="/stats">Stats page</a>).</li>
+        <li><code>validate_song_slugs</code> — batch-check song slugs against the catalog.</li>
+        <li><code>health</code> — server + data-freshness status.</li>
+      </ul>
+    </section>
+
+    <p class="muted" style="margin-top:1.5rem;">
+      The MCP server is open source too: <a href="https://github.com/pete-builds/open-setlist-stash">the game</a> and the data layer are both yours to self-host.
+    </p>
+  {% else %}
+    <p class="muted">This deployment doesn't expose a public MCP endpoint. The project is still <a href="https://github.com/pete-builds/open-setlist-stash">open source</a> if you'd like to run your own.</p>
+  {% endif %}
+{% endblock %}

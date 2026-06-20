@@ -104,6 +104,22 @@ class LeagueSummary:
     member_count: int
 
 
+@dataclass(frozen=True)
+class MemberScore:
+    """A member row joined to their current score for one target show.
+
+    ``score`` is 0 when the member has an unscored (pre-show) or missing
+    prediction, so the scoreboard can render everyone at "0" before scores
+    land instead of an empty "no scores yet" panel.
+    """
+
+    user_id: int
+    handle: str
+    role: str
+    score: int
+    has_pick: bool
+
+
 # ----- slug generation ------------------------------------------------------
 
 # Phish-themed wordlist. Kept short, recognizable, lowercase, hyphenless.
@@ -600,3 +616,94 @@ async def soft_delete_league(
         "league soft-deleted",
         extra={"league_id": league.id, "slug": league.slug},
     )
+
+
+# ----- "game" convenience helpers -------------------------------------------
+#
+# A "game" is the user-facing name for a league: a shareable pool with one
+# scoreboard. These helpers power the "the share link IS a game" flow, where a
+# user who hasn't made a league yet gets one auto-created the moment they share.
+
+
+async def get_or_create_user_game(
+    pool: asyncpg.Pool[Any],
+    *,
+    user_id: int,
+    handle: str,
+    settings: Settings,
+) -> League:
+    """Return the user's primary game, creating one if they have none.
+
+    "Primary" = the most-recently-created active league the user belongs to
+    (host or member). Reuses the existing membership listing so this never
+    spawns a duplicate game for someone who already has one. When the user
+    belongs to nothing, a fresh game is created with them as host, named
+    after their handle (e.g. ``alice's game``).
+    """
+    memberships = await list_user_leagues(pool, user_id)
+    if memberships:
+        # list_user_leagues is ordered newest-first; pick the freshest.
+        primary = memberships[0]
+        league = await get_league_by_slug(pool, primary.slug)
+        if league is not None:
+            return league
+    # No usable membership: mint a new game for this user.
+    name = f"{handle}'s game"
+    return await create_league(
+        pool,
+        name=name,
+        host_user_id=user_id,
+        settings=settings,
+    )
+
+
+async def list_members_with_scores(
+    pool: asyncpg.Pool[Any],
+    league_id: int,
+    target_show_date: Any | None,
+    *,
+    limit: int = 500,
+) -> list[MemberScore]:
+    """Every member of a league with their score for the target show.
+
+    Left-joins members to their prediction for ``target_show_date`` so each
+    member appears exactly once. A member with no prediction, or whose
+    prediction is not yet scored, shows ``score=0`` and ``has_pick`` reflecting
+    whether they submitted anything. Ordered by score desc, then host first,
+    then join order, so the scoreboard reads top-down even pre-show (all zeros,
+    host first). ``target_show_date`` may be None (e.g. mcp unreachable), in
+    which case every member shows 0 with has_pick False.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT lm.user_id,
+                   u.handle,
+                   lm.role,
+                   COALESCE(p.score, 0)::int AS score,
+                   (p.user_id IS NOT NULL)   AS has_pick
+              FROM league_members lm
+              JOIN users u ON u.id = lm.user_id
+              LEFT JOIN predictions p
+                     ON p.user_id = lm.user_id
+                    AND p.show_date = $2
+             WHERE lm.league_id = $1
+             ORDER BY COALESCE(p.score, 0) DESC,
+                      (lm.role = 'host') DESC,
+                      lm.joined_at ASC
+             LIMIT $3
+            """,
+            league_id,
+            target_show_date,
+            limit,
+        )
+    return [
+        MemberScore(
+            user_id=int(r["user_id"]),
+            handle=str(r["handle"]),
+            role=str(r["role"]),
+            score=int(r["score"]),
+            has_pick=bool(r["has_pick"]),
+        )
+        for r in rows
+    ]

@@ -47,6 +47,27 @@ class Settings(BaseSettings):
     # (and the Phish demo) stay clean. Edit/clear it per deployment via the
     # BETA_NOTICE env var with no rebuild.
     beta_notice: str = Field(default="")
+    # Whether the private-leagues / shareable-game feature is exposed at all.
+    # Deployment-level gate (oss-platform-split): True (the default) keeps the
+    # full games experience (the Phish demo, the OSS image, any third-party
+    # self-host). Set ENABLE_GAMES=false to strip every league/game route and
+    # link, turning the deployment into a single global per-show contest
+    # (Wappy Picks). The league code, tables, and routes still exist when
+    # gated off — the routes just 404/redirect and the templates hide the
+    # links — so nothing is deleted and no migration is needed.
+    enable_games: bool = Field(default=True)
+    # Public Streamable-HTTP endpoint for this deployment's read-only MCP
+    # server, surfaced on the /connect docs page so visitors can wire the
+    # band's setlist data into their own MCP client (Claude Code, Claude
+    # Desktop, etc.). Empty (the default) hides the /connect nav link and
+    # serves a "no public MCP on this deployment" panel — so the OSS image and
+    # the Phish demo stay clean (oss-platform-split). Set per deployment via
+    # the MCP_PUBLIC_URL env var (e.g. https://www.wappypicks.com/mcp).
+    mcp_public_url: str = Field(default="")
+    # Short human name for the band/catalog the MCP serves, used in the
+    # /connect docs copy (e.g. "Umphrey's McGee"). Falls back to a generic
+    # phrase when empty.
+    mcp_subject: str = Field(default="")
     # Directory the blog engine reads ``*.md`` posts from. Deployment-specific:
     # the content is NOT in the image, it's bind-mounted here per deployment
     # (same pattern as THEME_FILE). With nothing mounted the dir is missing,
@@ -70,6 +91,27 @@ class Settings(BaseSettings):
     # --- mcp-phish read path ---
     mcp_phish_url: str = Field(default="http://mcp-phish:3705/mcp")
     mcp_phish_timeout_seconds: float = Field(default=15.0, gt=0)
+
+    # --- Public MCP reverse proxy (/mcp) ---
+    # Upstream Streamable-HTTP MCP endpoint that public /mcp traffic is proxied
+    # to. Empty (the default) disables the proxy entirely: /mcp is not mounted,
+    # so the OSS image and the Phish demo never expose an upstream (they simply
+    # don't route public traffic there — oss-platform-split). Set per deployment
+    # (e.g. http://mcp-umphreys:3717/mcp on the Wappy Picks game) to turn the
+    # public reverse proxy on. This is the internal docker-network URL; the
+    # public-facing URL advertised on /connect is MCP_PUBLIC_URL.
+    mcp_upstream_url: str = Field(default="")
+    # Per-request timeout (seconds) for the upstream MCP proxy. Streaming SSE
+    # responses can stay open, so this bounds connect/read on the upstream
+    # rather than the full stream duration; keep it generous but finite so a
+    # hung upstream can't pin a worker forever.
+    mcp_proxy_timeout_seconds: float = Field(default=30.0, gt=0)
+    # Per-IP rate limit for the public /mcp proxy ONLY (the game UI is never
+    # rate-limited). Fixed-window: at most ``mcp_rate_limit_per_minute`` requests
+    # per 60s window per client IP, returning 429 when exceeded. The app sits
+    # behind Cloudflare, so the client IP is taken from the first X-Forwarded-For
+    # hop (falling back to the socket peer). 0 disables the limiter.
+    mcp_rate_limit_per_minute: int = Field(default=60, ge=0)
 
     # --- Showtime lock policy ---
     default_lock_time_local: str = Field(default="22:00")

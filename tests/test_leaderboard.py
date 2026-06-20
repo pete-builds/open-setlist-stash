@@ -24,12 +24,14 @@ from setlist_stash.leaderboard import (
     fetch_leaderboard,
     fetch_user_rank,
     list_scope_keys,
+    list_show_entrants,
     normalize_scope,
     rebuild_all,
     rebuild_all_time,
     rebuild_season,
     rebuild_weekly,
 )
+from setlist_stash.predictions import count_entrants
 from tests.conftest import requires_pg
 
 # ----- pure unit tests (always run) -----------------------------------------
@@ -486,6 +488,44 @@ async def test_resolver_tick_rebuilds_leaderboard(
 
     weekly_keys = await list_scope_keys(pg_pool, "weekly")
     assert any(k.startswith("2024-W") for k in weekly_keys)
+
+
+# ----- pre-score entrants (home count + leaderboard fallback) ---------------
+
+
+@pytest.mark.asyncio
+@requires_pg
+async def test_count_entrants_counts_submitters(pg_pool: Any) -> None:
+    """count_entrants returns the number of players in for a show."""
+    show_date = date(2024, 8, 1)
+    assert await count_entrants(pg_pool, show_date) == 0
+    await _seed_users_and_show(pg_pool, show_date)
+    assert await count_entrants(pg_pool, show_date) == 3
+    # A different show date is unaffected.
+    assert await count_entrants(pg_pool, date(2024, 8, 2)) == 0
+
+
+@pytest.mark.asyncio
+@requires_pg
+async def test_list_show_entrants_all_zero_in_submit_order(pg_pool: Any) -> None:
+    """Entrants list every submitter at 0, earliest submitter first.
+
+    No scores are stamped, so this is the pre-score / pre-lock state that
+    backs the global leaderboard fallback. Fair-play: handles only, no picks.
+    """
+    show_date = date(2024, 8, 3)
+    await _seed_users_and_show(pg_pool, show_date)
+    rows = await list_show_entrants(pg_pool, show_date, limit=50)
+    assert [r.handle for r in rows] == ["bob", "alice", "carol"]
+    assert all(r.total_score == 0 for r in rows)
+    assert [r.rank for r in rows] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+@requires_pg
+async def test_list_show_entrants_empty_for_unknown_show(pg_pool: Any) -> None:
+    rows = await list_show_entrants(pg_pool, date(2024, 8, 4), limit=50)
+    assert rows == []
 
     season_keys = await list_scope_keys(pg_pool, "tour")
     assert "2024-spring" in season_keys

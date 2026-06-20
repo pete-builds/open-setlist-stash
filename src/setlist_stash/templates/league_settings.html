@@ -3,7 +3,7 @@
 {% block content %}
   <h1>{{ league.name }} — settings</h1>
   <p class="muted">
-    Host-only. <a href="/league/{{ league.slug }}">Back to league</a>.
+    Host-only. <a href="/league/{{ league.slug }}">Back to game</a>.
   </p>
 
   {% if flash %}
@@ -13,7 +13,7 @@
     <p class="error">{{ error }}</p>
   {% endif %}
 
-  <h2>Edit league</h2>
+  <h2>Edit game</h2>
   <form method="post" action="/league/{{ league.slug }}/settings">
     <fieldset>
       <legend>Details</legend>
@@ -43,25 +43,25 @@
       Current slug: <code>{{ league.slug }}</code>
     </p>
     <p>
-      Rotating generates a fresh URL. The old URL stops working
-      immediately. Existing members keep their membership.
+      Rotating generates a fresh invite link. The old link stops working
+      immediately. Existing players keep their spots.
     </p>
     <form method="post" action="/league/{{ league.slug }}/rotate"
-          onsubmit="return confirm('Rotate invite slug? The old URL stops working immediately.');">
-      <button type="submit" class="btn">Rotate slug</button>
+          onsubmit="return confirm('Rotate invite link? The old link stops working immediately.');">
+      <button type="submit" class="btn">Rotate invite</button>
     </form>
   </div>
 
-  <h2>Delete league</h2>
+  <h2>Delete game</h2>
   <div class="card error-card">
     <p>
-      Soft-delete this league. The URL stops resolving and members lose
-      access from their /leagues page. Predictions are NOT touched —
-      they keep counting globally and in every other league.
+      Soft-delete this game. The link stops resolving and players lose
+      access from their games page. Predictions are NOT touched —
+      they keep counting globally and in every other game.
     </p>
     <form method="post" action="/league/{{ league.slug }}/delete"
           onsubmit="return confirm('Delete {{ league.name }}? This cannot be undone.');">
-      <button type="submit" class="btn">Delete league</button>
+      <button type="submit" class="btn">Delete game</button>
     </form>
   </div>
 {% endblock %}

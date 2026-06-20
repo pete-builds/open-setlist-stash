@@ -1,28 +1,28 @@
 {% extends "base.html" %}
-{% block title %}Leagues — {{ site_name }}{% endblock %}
+{% block title %}Your games — {{ site_name }}{% endblock %}
 {% block content %}
-  <h1>Your leagues</h1>
+  <h1>Your games</h1>
 
   {% if not leagues %}
     <div class="card">
-      <h2>No leagues yet</h2>
+      <h2>No games yet</h2>
       <p>
-        Private leagues let you compete with friends inside the larger
-        global game. One prediction per show, scored everywhere — your
-        picks count globally, in every league you join, and across the
-        weekly / season / all-time scopes.
+        A game is a private pool with one shared scoreboard. Start one, share
+        the link, and everyone who opens it joins. One prediction per show,
+        scored everywhere — your picks count in every game you're in and on the
+        global weekly / season / all-time boards.
       </p>
       <p class="muted">
-        Discovery is by URL share only. There is no public directory.
-        Send the league URL to friends to invite them.
+        Games are invite-by-link only. There's no public directory — just send
+        the link to your friends.
       </p>
       <p>
-        <a class="btn" href="/leagues/new">Create a league</a>
+        <a class="btn" href="/leagues/new">Start a game</a>
       </p>
     </div>
   {% else %}
     <p>
-      <a class="btn" href="/leagues/new">Create a league</a>
+      <a class="btn" href="/leagues/new">Start a game</a>
     </p>
     {% for league in leagues %}
       {% include "_league_card.html" %}

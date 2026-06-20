@@ -18,7 +18,7 @@ import hashlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -59,6 +59,7 @@ from setlist_stash.leaderboard import (
     fetch_user_rank,
     latest_scope_key,
     list_scope_keys,
+    list_show_entrants,
     normalize_scope,
 )
 from setlist_stash.leagues import (
@@ -69,10 +70,12 @@ from setlist_stash.leagues import (
     LeagueNameError,
     create_league,
     get_league_by_slug,
+    get_or_create_user_game,
     is_member,
     join_league,
     leave_league,
     list_league_members,
+    list_members_with_scores,
     list_user_leagues,
     member_count,
     rotate_slug,
@@ -88,11 +91,17 @@ from setlist_stash.locks import (
 )
 from setlist_stash.logging_setup import configure_logging
 from setlist_stash.mcp_client import McpPhishClient, McpPhishError
+from setlist_stash.mcp_proxy import (
+    FixedWindowRateLimiter,
+    McpReverseProxy,
+    client_ip,
+)
 from setlist_stash.migrate import run_migrations
 from setlist_stash.predictions import (
     PredictionDuplicate,
     PredictionError,
     PredictionLocked,
+    count_entrants,
     get_user_prediction,
     insert_prediction,
     normalize_picks,
@@ -205,6 +214,30 @@ def build_app(
     # post needs a container recreate to appear (cheap, and matches the theme
     # mount lifecycle).
     templates.env.globals["has_blog"] = len(load_posts(cfg.blog_dir)) > 0
+    # Whether the private-leagues / shareable-game UI renders at all. True (the
+    # default) keeps the full games experience; ENABLE_GAMES=false hides every
+    # league/game link in the templates and makes the league/game routes
+    # 404/redirect (see ``_games_gate``). The Phish demo and OSS image leave
+    # this True; only the Wappy Picks deployment sets it false.
+    templates.env.globals["enable_games"] = cfg.enable_games
+    # Whether to render the "Connect" (public MCP docs) nav link. True only
+    # when a public MCP endpoint is configured for this deployment. Empty/unset
+    # (the OSS image, the Phish demo) leaves the link off and the route serves a
+    # graceful "no public MCP" panel (oss-platform-split).
+    templates.env.globals["has_mcp"] = bool(cfg.mcp_public_url)
+    templates.env.globals["mcp_public_url"] = cfg.mcp_public_url
+    templates.env.globals["mcp_subject"] = cfg.mcp_subject
+
+    # Public MCP reverse proxy (oss-platform-split): only active when an
+    # upstream is configured for this deployment. When unset, /mcp is not
+    # mounted, so the OSS image and the Phish demo expose nothing.
+    mcp_proxy: McpReverseProxy | None = None
+    if cfg.mcp_upstream_url:
+        mcp_proxy = McpReverseProxy(
+            cfg.mcp_upstream_url,
+            timeout_seconds=cfg.mcp_proxy_timeout_seconds,
+        )
+    mcp_rate_limiter = FixedWindowRateLimiter(cfg.mcp_rate_limit_per_minute)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -216,6 +249,8 @@ def build_app(
             logger.exception("startup failed")
             raise
         yield
+        if mcp_proxy is not None:
+            await mcp_proxy.aclose()
         await close_pool()
 
     app = FastAPI(
@@ -224,6 +259,24 @@ def build_app(
         description="Open-source setlist prediction game.",
         lifespan=lifespan,
     )
+
+    # Per-IP rate limit, scoped to the public /mcp proxy ONLY. The game UI,
+    # static assets, and every other route are never touched by this middleware.
+    @app.middleware("http")
+    async def _mcp_rate_limit(request: Request, call_next: Any) -> Response:
+        path = request.url.path
+        if (
+            mcp_rate_limiter.enabled
+            and (path == "/mcp" or path.startswith("/mcp/"))
+            and not mcp_rate_limiter.allow(client_ip(request))
+        ):
+            return JSONResponse(
+                {"error": "rate limit exceeded"},
+                status_code=429,
+                headers={"Retry-After": "60"},
+            )
+        resp: Response = await call_next(request)
+        return resp
 
     if _STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
@@ -275,11 +328,15 @@ def build_app(
         # _format_lock shape the predict page consumes (lock_at_iso + display +
         # is_locked). Needs the DB pool; skip gracefully if it isn't up.
         upcoming_lock = None
+        entrant_count = 0
         if upcoming is not None:
             try:
                 pool = get_pool()
                 lock = await get_or_create_lock(pool, upcoming, cfg)
                 upcoming_lock = _format_lock(lock, cfg)
+                # How many players are in for the upcoming show. Count only
+                # (no picks revealed), so it's fair to show pre-lock.
+                entrant_count = await count_entrants(pool, upcoming.show_date)
             except RuntimeError:
                 upcoming_lock = None
         return _render(
@@ -289,10 +346,27 @@ def build_app(
             handle_help=HANDLE_HELP,
             upcoming_show=upcoming,
             upcoming_lock=upcoming_lock,
+            entrant_count=entrant_count,
         )
 
+    def _safe_next(raw: str) -> str:
+        """Whitelist a post-handle redirect target.
+
+        Only same-origin absolute paths (``/league/...``, ``/game/...``,
+        ``/predict/...``) are honored, so a crafted ``next`` can never bounce a
+        new player to an external site. Anything else falls back to ``/``.
+        """
+        s = (raw or "").strip()
+        if s.startswith("/") and not s.startswith("//"):
+            return s
+        return "/"
+
     @app.post("/handle")
-    async def post_handle(request: Request, handle: str = Form(...)) -> Response:
+    async def post_handle(
+        request: Request,
+        handle: str = Form(...),
+        next: str = Form(""),
+    ) -> Response:
         try:
             canonical = validate_handle(handle)
         except HandleError as exc:
@@ -314,7 +388,12 @@ def build_app(
                 handle_help=HANDLE_HELP,
                 error=str(exc),
             )
-        resp: Response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+        # Honor a safe same-origin ``next`` (e.g. a game invite the player
+        # arrived from) so a brand-new handle lands back on the invite, one
+        # step from joining. Defaults to home.
+        resp: Response = RedirectResponse(
+            url=_safe_next(next), status_code=status.HTTP_303_SEE_OTHER
+        )
         _set_session_cookie(resp, user_id)
         logger.info("created handle", extra={"user_id": user_id})
         return resp
@@ -542,6 +621,15 @@ def build_app(
             )
 
         memberships = await list_user_leagues(pool, user.id)
+        # "Share your game" payoff: make sure the player has a game to share, so
+        # the confirmation page can hand out a real invite link + show who's in.
+        game = await get_or_create_user_game(
+            pool, user_id=user.id, handle=user.handle, settings=cfg
+        )
+        game_invite_url = _invite_url(request, game.slug)
+        game_members = await list_members_with_scores(
+            pool, game.id, show_date, limit=200
+        )
         return _render(
             request,
             "predicted.html",
@@ -550,6 +638,9 @@ def build_app(
             pick_song_slugs=picks,
             encore_slug=encore,
             leagues=memberships,
+            game=game,
+            game_invite_url=game_invite_url,
+            game_members=game_members,
         )
 
     async def _re_render_predict(
@@ -662,6 +753,17 @@ def build_app(
                 user_row = await fetch_user_rank(
                     pool, scope, effective_key, user.id
                 )
+        # Target show for the "Make your picks" CTA. Resolved once here and
+        # reused for the pre-score fallback below, so we never double-call
+        # mcp-phish.
+        target_date = await _upcoming_show_date()
+        # Pre-score fallback: no scored rows for any bucket yet. Rather than an
+        # empty "No scores yet" panel, list the players who've entered the
+        # upcoming show at 0 (handles only, no picks — fair-play safe).
+        pre_score = False
+        if not rows and target_date is not None:
+            rows = await list_show_entrants(pool, target_date, limit=50)
+            pre_score = bool(rows)
         scope_keys = await list_scope_keys(pool, scope)
         ctx: dict[str, Any] = {
             "current_user": user,
@@ -670,6 +772,8 @@ def build_app(
             "scope_key": effective_key,
             "scope_keys": scope_keys,
             "rows": rows,
+            "pre_score": pre_score,
+            "upcoming_date": target_date,
             "user_row": user_row,
             "scope_options": [
                 ("weekly", "Weekly"),
@@ -723,6 +827,8 @@ def build_app(
         user = await _resolve_user(request)
         pool = get_pool()
         lock = await read_lock(pool, show_date)
+        # Entrant count is fair to show pre-lock (a count reveals no picks).
+        entrant_count = await count_entrants(pool, show_date)
         if lock is None:
             # No prediction_locks row at all means the form was never opened;
             # treat as "no predictions yet" rather than 404.
@@ -735,6 +841,7 @@ def build_app(
                 rows=[],
                 resolved=False,
                 pre_lock=True,
+                entrant_count=entrant_count,
             )
         if not lock.is_locked:
             # Pre-lock: never list predictions. Renders the panel with a
@@ -748,8 +855,12 @@ def build_app(
                 rows=[],
                 resolved=False,
                 pre_lock=True,
+                entrant_count=entrant_count,
             )
-        # Post-lock: list everyone's picks.
+        # Post-lock: this page IS the per-show leaderboard. Rank everyone by
+        # current score (live scoring climbs this throughout the show; pre-score
+        # everyone sits at 0), tie-broken by submit order so the list is stable.
+        # COALESCE(score, 0) keeps unscored rows at 0 rather than NULL-sorting.
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -758,7 +869,7 @@ def build_app(
                   FROM predictions p
                   JOIN users u ON u.id = p.user_id
                  WHERE p.show_date = $1
-                 ORDER BY p.submitted_at ASC
+                 ORDER BY COALESCE(p.score, 0) DESC, p.submitted_at ASC
                 """,
                 show_date,
             )
@@ -766,8 +877,15 @@ def build_app(
                 "SELECT resolved_at FROM prediction_locks WHERE show_date = $1",
                 show_date,
             )
-        # Hide score column until the show is resolved (`resolved_at` set).
+        # Whether the show is finalized (`resolved_at` stamped). Scores show
+        # live before that too (the resolver re-scores each tick), but the
+        # "final" wording only lands once finalized.
         resolved = resolved_at is not None
+        # Are any picks actually scored yet? Drives "everyone at 0 — scores
+        # climb live" wording vs. live/final scores. A show can be post-lock
+        # with no setlist published, so every score is NULL until the first
+        # resolver tick.
+        any_scored = any(r["score"] is not None for r in rows)
         return _render(
             request,
             "show_predictions.html",
@@ -776,8 +894,232 @@ def build_app(
             lock=_format_lock(lock, cfg),
             rows=[dict(r) for r in rows],
             resolved=resolved,
+            any_scored=any_scored,
             pre_lock=False,
+            entrant_count=entrant_count,
         )
+
+    @app.get("/u/{handle}", response_class=HTMLResponse)
+    async def user_profile(request: Request, handle: str) -> HTMLResponse:
+        """Public player profile: handle + their pick history across shows.
+
+        Every name link on a leaderboard points here, so this must resolve
+        (a missing route is the 404 source the leaderboards hit). Read-only
+        and fair-play safe: picks for a show are only listed once that show is
+        post-lock (the same rule the per-show predictions page enforces), so a
+        profile can't leak a live entrant's strategy before lock.
+        """
+        viewer = await _resolve_user(request)
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            target = await conn.fetchrow(
+                "SELECT id, handle FROM users WHERE lower(handle) = lower($1)",
+                handle,
+            )
+            if target is None:
+                resp = _render(
+                    request,
+                    "u_profile.html",
+                    current_user=viewer,
+                    profile_handle=handle,
+                    found=False,
+                    history=[],
+                )
+                resp.status_code = status.HTTP_404_NOT_FOUND
+                return resp
+            # Pick history, newest show first. Join the lock so we know whether
+            # each show is post-lock (picks revealable) and resolved (score
+            # final). Pre-lock shows list the date + "locked until showtime"
+            # rather than the picks, to stay fair-play safe.
+            rows = await conn.fetch(
+                """
+                SELECT p.show_date,
+                       p.pick_song_slugs,
+                       p.encore_slug,
+                       p.score,
+                       pl.lock_at,
+                       pl.resolved_at
+                  FROM predictions p
+                  LEFT JOIN prediction_locks pl ON pl.show_date = p.show_date
+                 WHERE p.user_id = $1
+                 ORDER BY p.show_date DESC
+                """,
+                target["id"],
+            )
+        now = datetime.now(tz=ZoneInfo("UTC"))
+        history: list[dict[str, Any]] = []
+        for r in rows:
+            lock_at = r["lock_at"]
+            is_locked = lock_at is not None and now >= lock_at
+            history.append(
+                {
+                    "show_date": r["show_date"],
+                    "pick_song_slugs": list(r["pick_song_slugs"] or []),
+                    "encore_slug": r["encore_slug"],
+                    "score": r["score"],
+                    "is_locked": is_locked,
+                    "resolved": r["resolved_at"] is not None,
+                }
+            )
+        return _render(
+            request,
+            "u_profile.html",
+            current_user=viewer,
+            profile_handle=target["handle"],
+            found=True,
+            history=history,
+        )
+
+    @app.get("/shows", response_class=HTMLResponse)
+    async def shows_index(request: Request) -> HTMLResponse:
+        """Archive index of every show that's had a prediction lock.
+
+        Read-only, no schema change. One row per ``prediction_locks`` show,
+        newest first, with an entrant count (LEFT JOIN predictions) and a
+        finalized flag (``resolved_at IS NOT NULL``). Each row links to that
+        show's per-show leaderboard. Venue names are best-effort via mcp-phish
+        and degrade to the bare date when upstream is down.
+        """
+        viewer = await _resolve_user(request)
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT pl.show_date,
+                       pl.resolved_at,
+                       pl.lock_at,
+                       COUNT(p.id) AS entrants
+                  FROM prediction_locks pl
+                  LEFT JOIN predictions p ON p.show_date = pl.show_date
+                 GROUP BY pl.show_date, pl.resolved_at, pl.lock_at
+                 ORDER BY pl.show_date DESC
+                """
+            )
+        # Best-effort venue lookup, keyed by ISO date. One mcp call; degrade to
+        # bare dates if it's unreachable so the archive always renders.
+        venue_by_date: dict[str, str] = {}
+        try:
+            async with McpPhishClient(
+                cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
+            ) as mcp:
+                recent = await mcp.recent_shows(limit=50)
+            for row in recent:
+                d = str(row.get("date") or "")
+                name = row.get("venue_name") or row.get("location") or ""
+                if d and name:
+                    venue_by_date[d] = str(name)
+        except McpPhishError:
+            logger.warning("mcp-phish unreachable on /shows; bare dates only")
+        shows: list[dict[str, Any]] = []
+        for r in rows:
+            iso = r["show_date"].isoformat()
+            shows.append(
+                {
+                    "show_date": r["show_date"],
+                    "venue": venue_by_date.get(iso),
+                    "entrants": int(r["entrants"]),
+                    "resolved": r["resolved_at"] is not None,
+                }
+            )
+        return _render(
+            request,
+            "shows.html",
+            current_user=viewer,
+            shows=shows,
+        )
+
+    @app.get("/stats", response_class=HTMLResponse)
+    async def stats_page(request: Request) -> HTMLResponse:
+        """Public catalog-wide statistics page.
+
+        Reads a single ``stats_overview`` roll-up from the MCP server and
+        renders it as a set of cards + tables (headline numbers, most-played,
+        biggest bust-outs, rarest songs, recent debuts, longest shows). The
+        upstream tool is band-specific; a deployment whose MCP omits it (the
+        Phish demo, a third-party self-host pointed at a different MCP) gets a
+        graceful "stats unavailable" panel instead of a crash — same degrade
+        pattern the rest of the app uses for an unreachable MCP.
+        """
+        viewer = await _resolve_user(request)
+        stats: dict[str, Any] | None = None
+        try:
+            async with McpPhishClient(
+                cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
+            ) as mcp:
+                stats = await mcp.stats_overview(top_n=10)
+        except McpPhishError:
+            logger.warning("stats_overview unavailable on /stats")
+            stats = None
+        return _render(
+            request,
+            "stats.html",
+            current_user=viewer,
+            stats=stats,
+        )
+
+    @app.get("/about", response_class=HTMLResponse)
+    async def about_page(request: Request) -> HTMLResponse:
+        """Static About page: what the game is, how it works, who built it.
+
+        Generic by default (uses ``site_name``); operator credit rides the
+        same env-driven ``footer_credit`` the footer uses, so a third-party
+        self-host shows no operator branding.
+        """
+        viewer = await _resolve_user(request)
+        upcoming = None
+        try:
+            async with McpPhishClient(
+                cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
+            ) as mcp:
+                upcoming = await select_form_show(cfg, mcp)
+        except McpPhishError:
+            upcoming = None
+        return _render(
+            request,
+            "about.html",
+            current_user=viewer,
+            upcoming_show=upcoming,
+        )
+
+    @app.get("/connect", response_class=HTMLResponse)
+    async def connect_page(request: Request) -> HTMLResponse:
+        """Developer docs page for the deployment's public read-only MCP.
+
+        Gives copy-paste setup for Claude Code, Claude Desktop, and any MCP
+        client, plus the tool list. When no public MCP is configured
+        (``MCP_PUBLIC_URL`` empty — the OSS image, the Phish demo) it renders a
+        "no public MCP on this deployment" panel; the nav link is hidden in
+        that case (``has_mcp`` global).
+        """
+        viewer = await _resolve_user(request)
+        return _render(
+            request,
+            "connect.html",
+            current_user=viewer,
+        )
+
+    # ----- public MCP reverse proxy ----------------------------------------
+    # Streaming passthrough to the deployment's internal Streamable-HTTP MCP.
+    # Only registered when MCP_UPSTREAM_URL is set (oss-platform-split): the
+    # OSS image / Phish demo never expose these routes. Rate-limited per IP by
+    # the _mcp_rate_limit middleware above.
+    if mcp_proxy is not None:
+
+        @app.api_route(
+            "/mcp",
+            methods=["GET", "POST", "DELETE"],
+            include_in_schema=False,
+        )
+        async def mcp_root(request: Request) -> Response:
+            return await mcp_proxy.handle(request)
+
+        @app.api_route(
+            "/mcp/{path:path}",
+            methods=["GET", "POST", "DELETE"],
+            include_in_schema=False,
+        )
+        async def mcp_subpath(request: Request, path: str) -> Response:
+            return await mcp_proxy.handle(request, path)
 
     @app.get("/show/{show_date}/assist", response_class=HTMLResponse)
     async def show_assist(
@@ -890,6 +1232,22 @@ def build_app(
 
     # ----- Phase 4c: private leagues ----------------------------------------
 
+    def _games_gate() -> Response | None:
+        """Block league/game routes when games are disabled.
+
+        Returns a 404 Response when ``enable_games`` is False so a gated
+        deployment (Wappy Picks) exposes no league/game surface, even by
+        direct URL. Returns None when games are enabled, so the route runs
+        normally. The league code and tables still exist — this only gates
+        the HTTP surface (oss-platform-split; nothing is deleted).
+        """
+        if cfg.enable_games:
+            return None
+        resp: Response = HTMLResponse(
+            "Not found", status_code=status.HTTP_404_NOT_FOUND
+        )
+        return resp
+
     def _parse_optional_date(raw: str) -> date | None:
         s = (raw or "").strip()
         if not s:
@@ -903,10 +1261,61 @@ def build_app(
 
     def _invite_url(request: Request, slug: str) -> str:
         base = str(request.base_url).rstrip("/")
-        return f"{base}/league/{slug}"
+        return f"{base}/game/{slug}"
+
+    async def _upcoming_show_date() -> date | None:
+        """Best-effort target show date for scoreboard 0-pre-scoring.
+
+        Returns the upcoming show's date so the scoreboard can show each
+        member's score for that show (0 before it's scored). Degrades to None
+        when mcp-phish is unreachable; callers treat None as "everyone at 0".
+        """
+        try:
+            async with McpPhishClient(
+                cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
+            ) as mcp:
+                upcoming = await select_form_show(cfg, mcp)
+        except McpPhishError:
+            return None
+        return upcoming.show_date if upcoming is not None else None
+
+    @app.post("/game/start")
+    async def game_start(request: Request) -> Response:
+        """Auto-create (or find) the caller's game and return its invite URL.
+
+        Powers the "share link IS a game" flow: the predict-page Share button
+        POSTs here first, gets back a real game invite URL, then hands that to
+        the native share / clipboard helper. Idempotent — a user who already
+        has a game gets that same game back, never a duplicate.
+
+        Returns JSON ``{"invite_url": ..., "slug": ..., "name": ...}``. A
+        signed-out caller gets 401 so the client can fall back to sharing the
+        current page.
+        """
+        if (gate := _games_gate()) is not None:
+            return gate
+        user = await _resolve_user(request)
+        if user is None:
+            return JSONResponse(
+                {"error": "Pick a handle first."},
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+        pool = get_pool()
+        league = await get_or_create_user_game(
+            pool, user_id=user.id, handle=user.handle, settings=cfg
+        )
+        return JSONResponse(
+            {
+                "invite_url": _invite_url(request, league.slug),
+                "slug": league.slug,
+                "name": league.name,
+            }
+        )
 
     @app.get("/leagues", response_class=HTMLResponse)
     async def leagues_index(request: Request) -> Response:
+        if (gate := _games_gate()) is not None:
+            return gate
         user = await _resolve_user(request)
         if user is None:
             return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
@@ -921,6 +1330,8 @@ def build_app(
 
     @app.get("/leagues/new", response_class=HTMLResponse)
     async def league_new_form(request: Request) -> Response:
+        if (gate := _games_gate()) is not None:
+            return gate
         user = await _resolve_user(request)
         if user is None:
             return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
@@ -938,6 +1349,8 @@ def build_app(
         start_date: str = Form(""),
         end_date: str = Form(""),
     ) -> Response:
+        if (gate := _games_gate()) is not None:
+            return gate
         user = await _resolve_user(request)
         if user is None:
             return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
@@ -985,6 +1398,8 @@ def build_app(
 
     @app.get("/league/{slug}", response_class=HTMLResponse)
     async def league_detail(request: Request, slug: str) -> Response:
+        if (gate := _games_gate()) is not None:
+            return gate
         pool = get_pool()
         league = await get_league_by_slug(pool, slug)
         if league is None:
@@ -1028,8 +1443,20 @@ def build_app(
             resp.delete_cookie("phishgame_league_flash")
         return resp
 
+    @app.get("/game/{slug}", response_class=HTMLResponse)
+    async def game_detail(request: Request, slug: str) -> Response:
+        """Friendlier alias for ``/league/{slug}``.
+
+        Same behavior: non-members see the join page, members see the
+        dashboard. Kept as a thin wrapper so existing /league/ links never
+        break while shared "game" links read naturally.
+        """
+        return await league_detail(request, slug)
+
     @app.post("/league/{slug}/join")
     async def league_join(request: Request, slug: str) -> Response:
+        if (gate := _games_gate()) is not None:
+            return gate
         user = await _resolve_user(request)
         if user is None:
             return RedirectResponse(
@@ -1056,13 +1483,15 @@ def build_app(
             )
             full_resp.status_code = status.HTTP_409_CONFLICT
             return full_resp
+        # Land joiners on the shared scoreboard, not the dashboard — that is
+        # the "everyone sees one scoreboard" payoff the invite promised.
         redirect: Response = RedirectResponse(
-            f"/league/{league.slug}",
+            f"/league/{league.slug}/leaderboard",
             status_code=status.HTTP_303_SEE_OTHER,
         )
         redirect.set_cookie(
             "phishgame_league_flash",
-            f"You joined {league.name}.",
+            f"You're in {league.name}.",
             max_age=30,
             httponly=True,
             samesite="lax",
@@ -1070,8 +1499,15 @@ def build_app(
         )
         return redirect
 
+    @app.post("/game/{slug}/join")
+    async def game_join(request: Request, slug: str) -> Response:
+        """Alias for ``/league/{slug}/join``."""
+        return await league_join(request, slug)
+
     @app.post("/league/{slug}/leave")
     async def league_leave(request: Request, slug: str) -> Response:
+        if (gate := _games_gate()) is not None:
+            return gate
         user = await _resolve_user(request)
         if user is None:
             return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
@@ -1108,6 +1544,8 @@ def build_app(
     async def league_leaderboard_view(
         request: Request, slug: str
     ) -> Response:
+        if (gate := _games_gate()) is not None:
+            return gate
         pool = get_pool()
         league = await get_league_by_slug(pool, slug)
         if league is None:
@@ -1123,6 +1561,22 @@ def build_app(
             user_row = await fetch_user_rank(
                 pool, scope="league", scope_key=league.slug, user_id=user.id
             )
+        # Pre-show / pre-score, the snapshot table is empty so the cumulative
+        # ``rows`` above is blank. Show every player at "0" instead of an empty
+        # panel by listing members joined to their score for the upcoming show.
+        # This is display-only; it never touches the snapshot rebuild.
+        target_date = await _upcoming_show_date()
+        member_scores = await list_members_with_scores(
+            pool, league.id, target_date, limit=200
+        )
+        invite_url = _invite_url(request, league.slug)
+        # Did the viewer arrive via this game link and already join? Members get
+        # a direct "Make your picks" button; a brand-new visitor gets a
+        # "Join & make your picks" CTA that routes through the game's join flow,
+        # so picking + membership stay connected.
+        viewer_is_member = user is not None and await is_member(
+            pool, league.id, user.id
+        )
         return _render(
             request,
             "league_leaderboard.html",
@@ -1131,7 +1585,16 @@ def build_app(
             member_count=count,
             rows=rows,
             user_row=user_row,
+            member_scores=member_scores,
+            invite_url=invite_url,
+            upcoming_date=target_date,
+            viewer_is_member=viewer_is_member,
         )
+
+    @app.get("/game/{slug}/leaderboard", response_class=HTMLResponse)
+    async def game_leaderboard_view(request: Request, slug: str) -> Response:
+        """Alias for ``/league/{slug}/leaderboard`` — the shared scoreboard."""
+        return await league_leaderboard_view(request, slug)
 
     async def _require_host(
         request: Request, slug: str
@@ -1139,6 +1602,8 @@ def build_app(
         """Resolve user + league + enforce host-only. Returns the pair on success
         or a Response on failure (use ``isinstance(..., Response)``).
         """
+        if (gate := _games_gate()) is not None:
+            return gate
         user = await _resolve_user(request)
         if user is None:
             return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)

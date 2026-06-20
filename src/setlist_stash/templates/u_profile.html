@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ profile_handle }} — {{ site_name }}{% endblock %}
+{% block content %}
+  {% if not found %}
+    <h1>No such player</h1>
+    <p class="muted">
+      No player with the handle <strong>{{ profile_handle }}</strong> exists.
+    </p>
+    <p><a href="/leaderboard">Back to the leaderboard</a></p>
+  {% else %}
+    <h1>{{ profile_handle }}</h1>
+    {% if current_user and current_user.handle == profile_handle %}
+      <p class="muted">This is you.</p>
+    {% endif %}
+
+    {% if history %}
+      <h2>Pick history</h2>
+      <div class="leaderboard-wrap">
+        <table class="leaderboard">
+          <thead>
+            <tr>
+              <th>Show</th>
+              <th class="num">Score</th>
+              <th>Picks</th>
+              <th>Encore call</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for h in history %}
+              <tr>
+                <td><a href="/show/{{ h.show_date }}/predictions">{{ h.show_date }}</a></td>
+                <td class="num">
+                  {% if h.is_locked %}{{ h.score if h.score is not none else 0 }}{% else %}-{% endif %}
+                </td>
+                {% if h.is_locked %}
+                  <td class="muted">{{ h.pick_song_slugs | join(', ') }}</td>
+                  <td class="muted">{{ h.encore_slug or '-' }}</td>
+                {% else %}
+                  <td class="muted" colspan="2"><em>Hidden until showtime</em></td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        Picks reveal at lock to keep the contest fair. Each played pick is 2
+        points; a correct encore call is +5.
+      </p>
+    {% else %}
+      <p class="muted">{{ profile_handle }} hasn't made any picks yet.</p>
+    {% endif %}
+
+    <p><a href="/leaderboard">Back to the leaderboard</a></p>
+  {% endif %}
+{% endblock %}

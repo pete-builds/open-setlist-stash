@@ -3,6 +3,12 @@
 {% block content %}
   <h1>Leaderboard</h1>
 
+  {% if upcoming_date %}
+    <p class="make-picks-cta">
+      <a class="btn btn-primary btn-lg" href="/predict/{{ upcoming_date }}">🎸 Make your picks</a>
+    </p>
+  {% endif %}
+
   <nav class="scope-tabs" role="tablist" aria-label="Leaderboard scope">
     {% for value, label in scope_options %}
       <a class="scope-tab {% if value == scope %}is-active{% endif %}"
@@ -47,8 +53,10 @@
     Tour-real bucketing lands when the setlist source exposes tour mappings; until
     then the "Season" tab uses meteorological seasons.
   </p>
+  {% if enable_games %}
   <p class="muted">
     Want a private leaderboard with friends?
     <a href="/leagues">Create or join a league</a>. Same picks, scoped scoreboard.
   </p>
+  {% endif %}
 {% endblock %}

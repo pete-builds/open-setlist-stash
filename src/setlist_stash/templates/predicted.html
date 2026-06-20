@@ -1,24 +1,87 @@
 {% extends "base.html" %}
 {% block title %}Submitted - {{ show_date }}{% endblock %}
 {% block content %}
-  <h1>Prediction submitted</h1>
-  <p>Locked in for <strong>{{ show_date }}</strong>.</p>
+  <h1>Picks locked in</h1>
+  <p>You're set for <strong>{{ show_date }}</strong>.</p>
   <ul>
     <li>Picks: {{ pick_song_slugs | join(', ') }}</li>
     <li>Encore call: {{ encore_slug or '-' }}</li>
   </ul>
   <p class="muted">
-    Score lands once the resolver picks up the published setlist.
-    Same picks count globally and in every league you've joined.
+    Scores start at 0 and climb live during the show as songs get played.
+    The same picks count on every scoreboard you're in.
   </p>
 
-  <p>Your pick is locked. See how it stacks up in:</p>
+  {% if enable_games and game and game_invite_url %}
+    <div class="card share-game-card">
+      <h2>🎸 Play with friends — share your game</h2>
+      <p>
+        Send this link to your crew. Whoever opens it joins
+        <strong>{{ game.name }}</strong> and lands on the same scoreboard.
+      </p>
+      <p><code id="game-invite-url">{{ game_invite_url }}</code></p>
+      <p>
+        <button type="button" class="btn" id="share-game-btn"
+                data-share-url="{{ game_invite_url }}"
+                data-share-title="Join my {{ site_name }} game"
+                data-share-text="I'm picking the setlist on {{ site_name }}. Join my game and watch the scoreboard:">Share / copy invite</button>
+        <a class="btn" href="/league/{{ game.slug }}/leaderboard">Open scoreboard</a>
+      </p>
+      {% if game_members %}
+        <p class="muted">In this game so far:
+          {% for m in game_members %}{{ m.handle }}{% if not loop.last %}, {% endif %}{% endfor %}.
+        </p>
+      {% endif %}
+    </div>
+    <script>
+      (function () {
+        var btn = document.getElementById('share-game-btn');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+          window.ossShare(btn, {
+            url: btn.dataset.shareUrl,
+            title: btn.dataset.shareTitle,
+            text: btn.dataset.shareText
+          });
+        });
+      })();
+    </script>
+  {% endif %}
+
+  <p>See how your pick stacks up:</p>
   <p class="post-submit-leagues">
-    {% for league in leagues %}
-      <a class="btn" href="/league/{{ league.slug }}/leaderboard">{{ league.name }}</a>
-    {% endfor %}
-    <a class="btn" href="/leaderboard">global</a>
+    {% if enable_games %}
+      {% for league in leagues %}
+        <a class="btn" href="/league/{{ league.slug }}/leaderboard">{{ league.name }}</a>
+      {% endfor %}
+      <a class="btn" href="/leaderboard">Global</a>
+    {% else %}
+      <a class="btn btn-primary" href="/show/{{ show_date }}/predictions">See the leaderboard</a>
+      <button type="button" class="btn" id="share-home-btn"
+              data-share-title="{{ site_name }}"
+              data-share-text="I just made my setlist picks on {{ site_name }}. Make yours:">Share / copy link</button>
+    {% endif %}
   </p>
+
+  {% if not enable_games %}
+    <script>
+      // Share the site itself (no per-user game in single-board mode). Hands
+      // the home URL to the shared ossShare helper (base.html): native share
+      // sheet on phones, clipboard/execCommand copy on desktop.
+      (function () {
+        var btn = document.getElementById('share-home-btn');
+        if (!btn) return;
+        var url = new URL('/', window.location.origin).href;
+        btn.addEventListener('click', function () {
+          window.ossShare(btn, {
+            url: url,
+            title: btn.dataset.shareTitle,
+            text: btn.dataset.shareText
+          });
+        });
+      })();
+    </script>
+  {% endif %}
 
   <p><a href="/">Home</a></p>
 {% endblock %}

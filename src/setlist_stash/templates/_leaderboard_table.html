@@ -7,6 +7,29 @@
         scores the next show.
       </p>
     </div>
+  {% elif pre_score | default(false) %}
+    <p class="muted">
+      Players in for the next show. Everyone starts at 0 — scores climb live
+      once songs get played.
+    </p>
+    <table class="leaderboard">
+      <thead>
+        <tr>
+          <th class="num">#</th>
+          <th>Handle</th>
+          <th class="num">Score</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr {% if current_user and current_user.handle == row.handle %}class="is-me"{% endif %}>
+            <td class="num">{{ loop.index }}</td>
+            <td><a href="/u/{{ row.handle }}">{{ row.handle }}</a>{% if current_user and current_user.handle == row.handle %} <span class="me-tag">you</span>{% endif %}</td>
+            <td class="num">{{ row.total_score }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   {% else %}
     <table class="leaderboard">
       <thead>

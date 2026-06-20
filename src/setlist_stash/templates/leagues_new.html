@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New league — {{ site_name }}{% endblock %}
+{% block title %}New game — {{ site_name }}{% endblock %}
 {% block content %}
-  <h1>Create a league</h1>
+  <h1>Start a game</h1>
 
   <p class="muted">
-    Anyone with the league URL can join. You can rotate the URL later.
-    Member cap: {{ member_cap }}.
+    Anyone with the invite link can join. You can rotate the link later.
+    Player cap: {{ member_cap }}.
   </p>
 
   {% if error %}
@@ -14,7 +14,7 @@
 
   <form method="post" action="/leagues/new">
     <fieldset>
-      <legend>League</legend>
+      <legend>Game</legend>
 
       <label for="name">Name</label>
       <input type="text" id="name" name="name" required minlength="1"
@@ -32,10 +32,10 @@
 
       <p class="muted">
         Leave the dates blank to score every show forever.
-        Set them to scope the leaderboard to a specific tour.
+        Set them to scope the scoreboard to a specific tour.
       </p>
     </fieldset>
 
-    <button type="submit" class="btn">Create league</button>
+    <button type="submit" class="btn">Start game</button>
   </form>
 {% endblock %}

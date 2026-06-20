@@ -30,30 +30,32 @@
     {% else %}
       <p class="muted">
         Your handle is anonymous-only. Keep playing from this browser; your
-        picks and leagues stay tied to this handle.
+        picks and games stay tied to this handle.
       </p>
     {% endif %}
   </div>
 
-  <h2>Your leagues</h2>
+  {% if enable_games %}
+  <h2>Your games</h2>
   {% if leagues %}
     {% for league in leagues %}
       {% include "_league_card.html" %}
     {% endfor %}
     <p>
-      <a class="btn" href="/leagues/new">Create another league</a>
+      <a class="btn" href="/leagues/new">Start another game</a>
     </p>
   {% else %}
     <div class="card">
-      <p>You haven't joined any leagues yet.</p>
+      <p>You haven't joined any games yet.</p>
       <p>
-        <a class="btn" href="/leagues/new">Create a league</a>
+        <a class="btn" href="/leagues/new">Start a game</a>
       </p>
       <p class="muted">
-        Discovery is by URL share only. If a friend sent you a league
-        link, paste it into your browser and join from there.
+        Games are invite-by-link only. If a friend sent you a game
+        link, open it in your browser and join from there.
       </p>
     </div>
+  {% endif %}
   {% endif %}
 
 {% endblock %}

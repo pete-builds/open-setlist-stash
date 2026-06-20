@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}About — {{ site_name }}{% endblock %}
+{% block content %}
+  <h1>About {{ site_name }}</h1>
+
+  <p class="muted">A free setlist-prediction game. Guess the show before it happens, then watch the scoreboard climb live as the band plays.</p>
+
+  <p class="make-picks-cta" style="margin-top:0.6rem;">
+    {% if current_user and upcoming_show %}
+      <a class="btn btn-primary btn-lg" href="/predict/{{ upcoming_show.show_date }}">🎸 Make your picks</a>
+    {% else %}
+      <a class="btn btn-primary btn-lg" href="/">🎸 Start playing</a>
+    {% endif %}
+  </p>
+
+  <section class="card">
+    <h2>How it works</h2>
+    <ul>
+      <li><strong>Pick up to 5 songs</strong> you think the band will play. One pick is required; the rest are yours to gamble.</li>
+      <li><strong>Tap one pick as your encore call.</strong> If it lands in the encore, that's bonus points.</li>
+      <li><strong>Picks lock at showtime</strong> and can't be changed once the music starts.</li>
+      <li><strong>Scoring runs live.</strong> Your score starts at 0 and climbs through the night as your songs get played; no refresh-and-pray, just reload the scoreboard.</li>
+    </ul>
+
+    <h3>The scoring</h3>
+    <ul>
+      <li>Each song pick that gets played: <strong>2 points</strong>.</li>
+      <li>Your encore call lands in the encore: <strong>+5</strong>.</li>
+      <li>A pick that doesn't get played scores 0. An encore call that plays somewhere other than the encore still earns its 2.</li>
+    </ul>
+
+    <h3>Fair-play hints</h3>
+    <p>
+      When you're building picks, the song search shows a small "shows since last play" gap hint so you don't burn a pick on something the band just played last night. It never reveals play counts or strategy: every player sees the same neutral help.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>What's under the hood</h2>
+    <p>
+      {{ site_name }} is built on a self-hosted setlist data platform: an ETL pipeline keeps a Postgres "vault" of every show and song in sync with the public setlist archive, and a read-only <strong>MCP server</strong> exposes that data over a clean, typed tool surface. The game reads from that MCP, the <a href="/stats">Stats page</a> rolls it up, and the live resolver re-scores every prediction against the in-progress setlist on show night.
+    </p>
+    {% if has_mcp %}
+    <p>
+      That same MCP is open for you to use. Wire it into Claude Code, Claude Desktop, or any MCP client and query the catalog yourself: <a href="/connect">see the connection guide</a>.
+    </p>
+    {% endif %}
+    <p>
+      The whole app is <strong>open source under the MIT license</strong>. Run your own instance for any band with a public setlist source:
+      <a href="https://github.com/pete-builds/open-setlist-stash">github.com/pete-builds/open-setlist-stash</a>.
+    </p>
+  </section>
+
+  {% if footer_credit %}
+  <p class="muted" style="margin-top:1.5rem;">
+    {% if footer_credit_url %}
+      <a href="{{ footer_credit_url }}">{{ footer_credit }}</a>.
+    {% else %}
+      {{ footer_credit }}.
+    {% endif %}
+  </p>
+  {% endif %}
+{% endblock %}

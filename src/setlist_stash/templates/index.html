@@ -2,18 +2,17 @@
 {% block title %}{{ site_name }}{% endblock %}
 {% block content %}
   <h1>{{ site_name }}</h1>
-  <p class="muted" style="margin-top:0.4rem;">
-    {% if theme_file and "lot-poster" in theme_file %}
-      <span class="stamp stamp-teal">Lot Only</span>
-      <span class="sticker">v{{ version }} BETA</span>
-      <span class="donut" aria-hidden="true"></span>
-    {% endif %}
-    setlist picks &middot; weekly leaderboard &middot; private leagues
-  </p>
 
-  {% if beta_notice %}
-    <p class="beta-notice"><span class="badge">Beta</span> {{ beta_notice }}</p>
-  {% endif %}
+  {# Primary action, above the fold. Signed-in players jump straight to the
+     predict page for the upcoming show; anonymous visitors are sent to the
+     handle form below (they need a handle before they can pick). #}
+  <p class="make-picks-cta" style="margin-top:0.6rem;">
+    {% if current_user and upcoming_show %}
+      <a class="btn btn-primary btn-lg" href="/predict/{{ upcoming_show.show_date }}">🎸 Make your picks</a>
+    {% else %}
+      <a class="btn btn-primary btn-lg" href="#pick-a-handle">🎸 Make your picks</a>
+    {% endif %}
+  </p>
 
   {% if upcoming_show and upcoming_lock %}
     <div class="next-show" id="next-show">
@@ -30,7 +29,28 @@
           (<span id="home-lock-countdown" data-lock-at="{{ upcoming_lock.lock_at_iso }}">{{ upcoming_lock.seconds_until_lock }}s</span>)
         </p>
       {% endif %}
+      {% if entrant_count %}
+        <p class="next-show-players">
+          🎸 <strong>{{ entrant_count }}</strong> player{% if entrant_count != 1 %}s{% endif %} in
+          for {{ upcoming_show.venue_name or upcoming_show.location or upcoming_show.show_date }}
+        </p>
+      {% endif %}
     </div>
+  {% endif %}
+
+  {# Tagline + beta notice live below the next-show details: context, not the
+     headline action. #}
+  <p class="muted" style="margin-top:0.4rem;">
+    {% if theme_file and "lot-poster" in theme_file %}
+      <span class="stamp stamp-teal">Lot Only</span>
+      <span class="sticker">v{{ version }} BETA</span>
+      <span class="donut" aria-hidden="true"></span>
+    {% endif %}
+    setlist picks &middot; live scoreboard &middot; play with friends
+  </p>
+
+  {% if beta_notice %}
+    <p class="beta-notice"><span class="badge">Beta</span> {{ beta_notice }}</p>
   {% endif %}
 
   {% if current_user %}
@@ -41,19 +61,22 @@
           {% if upcoming_show.venue_name %}&middot; {{ upcoming_show.venue_name }}{% endif %}
           {% if upcoming_show.location %} ({{ upcoming_show.location }}){% endif %}.
         </p>
+        {% if enable_games %}
         <p>
-          <a class="btn" href="/predict/{{ upcoming_show.show_date }}">Make your picks</a>
-          <a class="btn" href="/leagues">Create or join a league</a>
+          <a class="btn" href="/leagues">Your games</a>
         </p>
+        {% endif %}
       {% else %}
         <p class="muted">No upcoming show on the board yet. Check back soon.</p>
+        {% if enable_games %}
         <p>
-          <a class="btn" href="/leagues">Create or join a league</a>
+          <a class="btn" href="/leagues">Your games</a>
         </p>
+        {% endif %}
       {% endif %}
     </div>
   {% else %}
-    <h2>Pick a handle</h2>
+    <h2 id="pick-a-handle">Pick a handle</h2>
     <p>Anonymous play. {{ handle_help }}</p>
     <form method="post" action="/handle">
       <fieldset>
@@ -78,12 +101,32 @@
 
   <section class="card" id="how-it-works" style="margin-top:1.5rem;">
     <h2>How it works</h2>
+    {% if enable_games %}
+    <p class="how-it-works-steps">
+      <strong>Pick songs → share your game → watch the scoreboard.</strong>
+      Make your picks, tap Share to send your game link to friends, and everyone
+      who opens it joins the same scoreboard. Scores start at 0 and climb live as
+      songs get played.
+    </p>
     <p>
       <strong>{{ site_name }}</strong> is a free setlist-prediction game. Before a
       show starts, you guess what the band will play. After the show, your picks
-      are scored against the real setlist and you climb the leaderboard — on your
-      own or in a private league with friends.
+      are scored against the real setlist and you climb the scoreboard — on your
+      own or in a game with friends.
     </p>
+    {% else %}
+    <p class="how-it-works-steps">
+      <strong>Pick songs → watch the scoreboard.</strong>
+      Make your picks before the show, then watch the leaderboard. Scores start at
+      0 and climb live as songs get played.
+    </p>
+    <p>
+      <strong>{{ site_name }}</strong> is a free setlist-prediction game. Before a
+      show starts, you guess what the band will play. After the show, your picks
+      are scored against the real setlist and everyone climbs the same
+      leaderboard.
+    </p>
+    {% endif %}
 
     <h3>Making picks</h3>
     <ul>
