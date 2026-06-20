@@ -114,6 +114,44 @@ _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
 _STATIC_DIR = _PACKAGE_DIR / "static"
 
 
+def _group_setlist(setlist: list[Any]) -> list[dict[str, Any]]:
+    """Group a raw ``get_show`` setlist into ordered per-set blocks.
+
+    Input items look like
+    ``{position, set_name, song_title, song_slug, transition, footnote,
+    provenance, advisory}``. ``provenance`` and ``advisory`` are NEW optional
+    fields (the Phish MCP may not send them yet), so they default to
+    ``"atu"`` / ``False`` — a song is only flagged unconfirmed when the MCP
+    explicitly says ``advisory=true`` or ``provenance=="x"``.
+
+    Returns ``[{set_name, songs: [...]}, ...]`` with sets in first-seen order
+    and songs in the order they arrived (the MCP returns them in play order).
+    Generic: no band-specific set labels are assumed.
+    """
+    groups: list[dict[str, Any]] = []
+    index: dict[str, dict[str, Any]] = {}
+    for item in setlist:
+        if not isinstance(item, dict):
+            continue
+        set_name = str(item.get("set_name") or "Set")
+        provenance = str(item.get("provenance") or "atu").lower()
+        advisory = bool(item.get("advisory")) or provenance == "x"
+        song = {
+            "song_title": item.get("song_title") or item.get("song_slug") or "",
+            "song_slug": item.get("song_slug") or "",
+            "transition": item.get("transition") or "",
+            "footnote": item.get("footnote") or "",
+            "advisory": advisory,
+        }
+        bucket = index.get(set_name)
+        if bucket is None:
+            bucket = {"set_name": set_name, "songs": []}
+            index[set_name] = bucket
+            groups.append(bucket)
+        bucket["songs"].append(song)
+    return groups
+
+
 def _compute_asset_version(theme_file: str = "") -> str:
     """Short content hash of the CSS, for cache-busting ``?v=`` query stamps.
 
@@ -886,6 +924,25 @@ def build_app(
         # with no setlist published, so every score is NULL until the first
         # resolver tick.
         any_scored = any(r["score"] is not None for r in rows)
+        # Live setlist: fold a single soft get_show into this existing post-lock
+        # data path so players watch the setlist fill in beside the standings.
+        # Reuses the same MCP client/error pattern as /assist (no second client).
+        # A failure/timeout degrades to an empty list — the standings still
+        # render and the template shows a "not posted yet" placeholder.
+        setlist_groups: list[dict[str, Any]] = []
+        try:
+            async with McpPhishClient(
+                cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
+            ) as mcp:
+                show_meta = await mcp.get_show(show_date.isoformat())
+            setlist_groups = _group_setlist(
+                list(show_meta.get("setlist") or [])
+            )
+        except McpPhishError:
+            logger.warning(
+                "get_show failed in /show/predictions (setlist degraded)",
+                extra={"show_date": str(show_date)},
+            )
         return _render(
             request,
             "show_predictions.html",
@@ -897,6 +954,7 @@ def build_app(
             any_scored=any_scored,
             pre_lock=False,
             entrant_count=entrant_count,
+            setlist_groups=setlist_groups,
         )
 
     @app.get("/u/{handle}", response_class=HTMLResponse)

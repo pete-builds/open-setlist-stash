@@ -1024,3 +1024,55 @@ table.stat-table tbody tr:last-child td { border-bottom: 0; }
   .footer-cols { gap: 1.6rem 2.2rem; }
   .stat-card .stat-value { font-size: 1.6rem; }
 }
+
+/* Live setlist on the per-show leaderboard page. Uses theme variables so
+   any mounted theme (denim Wappy Picks, etc.) inherits the styling. */
+.setlist {
+  margin: 1.5rem 0;
+  padding: 1rem 1.25rem;
+  background: var(--surface-alt);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.setlist > h2 { margin-top: 0; }
+.setlist-live {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  vertical-align: middle;
+}
+.setlist-set { margin: 0.75rem 0; }
+.setlist-set-name {
+  font-size: 0.95rem;
+  margin: 0 0 0.25rem;
+  color: var(--accent-deep);
+}
+.setlist-songs {
+  margin: 0;
+  line-height: 1.9;
+  color: var(--text);
+}
+.setlist-song { white-space: nowrap; }
+.setlist-trans { color: var(--text-mute); white-space: nowrap; }
+.setlist-song--advisory {
+  font-style: italic;
+  color: var(--text-soft);
+  border-bottom: 1px dotted var(--text-mute);
+}
+.setlist-tag {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-mute);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.3rem;
+  white-space: nowrap;
+}
+.setlist-note { margin-top: 0.75rem; font-size: 0.85rem; }

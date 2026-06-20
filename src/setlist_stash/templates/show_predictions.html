@@ -47,6 +47,26 @@
       <p class="muted">Lock: <strong>{{ lock.lock_at_display }}</strong>{% if resolved %} &middot; final{% elif any_scored %} &middot; scoring live{% else %} &middot; awaiting setlist{% endif %}.</p>
     {% endif %}
 
+    {# Live setlist — fills in set by set as songs come in, beside the standings. #}
+    <section class="setlist" aria-label="Setlist">
+      <h2>Setlist{% if not resolved %} <span class="muted setlist-live">live</span>{% endif %}</h2>
+      {% if setlist_groups %}
+        {% for grp in setlist_groups %}
+          <div class="setlist-set">
+            <h3 class="setlist-set-name">{{ grp.set_name }}</h3>
+            <p class="setlist-songs">
+              {%- for song in grp.songs -%}
+                <span class="setlist-song{% if song.advisory %} setlist-song--advisory{% endif %}"{% if song.advisory %} title="Unconfirmed (via X) — may be revised"{% endif %}>{{ song.song_title }}{% if song.advisory %} <span class="setlist-tag">via X</span>{% endif %}</span>{%- if song.transition -%}<span class="setlist-trans"> {{ song.transition }} </span>{%- elif not loop.last -%}<span class="setlist-trans">, </span>{%- endif -%}
+              {%- endfor -%}
+            </p>
+          </div>
+        {% endfor %}
+        <p class="muted setlist-note">Songs appear as they're played. <span class="setlist-tag">via X</span> marks unconfirmed early reports that get superseded once the official source posts.</p>
+      {% else %}
+        <p class="muted">Setlist not posted yet. It'll fill in here as songs come in.</p>
+      {% endif %}
+    </section>
+
     {% if rows %}
       <div class="leaderboard-wrap">
         <table class="leaderboard">
