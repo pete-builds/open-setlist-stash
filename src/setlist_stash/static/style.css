@@ -584,7 +584,12 @@ button[disabled],
 .scope-key-list a { color: var(--text-soft); text-decoration: none; }
 .scope-key-list a:hover { color: var(--accent); }
 
-.leaderboard-wrap { margin: 0.5rem 0 1.5rem; }
+.leaderboard-wrap {
+  margin: 0.5rem 0 1.5rem;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
 
 table.leaderboard {
   width: 100%;
@@ -1033,6 +1038,8 @@ table.stat-table tbody tr:last-child td { border-bottom: 0; }
   background: var(--surface-alt);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
+  max-width: 100%;
+  overflow: hidden;
 }
 .setlist > h2 { margin-top: 0; }
 .setlist-live {
@@ -1056,8 +1063,18 @@ table.stat-table tbody tr:last-child td { border-bottom: 0; }
   margin: 0;
   line-height: 1.9;
   color: var(--text);
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  max-width: 100%;
 }
-.setlist-song { white-space: nowrap; }
+/* Songs may wrap between each other; keep a short title intact when it fits,
+   but never let a pathological token push past the grey box. */
+.setlist-song {
+  display: inline;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
 .setlist-trans { color: var(--text-mute); white-space: nowrap; }
 .setlist-song--advisory {
   font-style: italic;
