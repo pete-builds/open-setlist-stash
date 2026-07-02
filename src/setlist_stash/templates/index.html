@@ -83,7 +83,7 @@
         <legend>Sign on</legend>
         <label for="handle">Handle</label>
         <input type="text" id="handle" name="handle" required minlength="2"
-               maxlength="32" pattern="[A-Za-z0-9_-]{2,32}" autofocus
+               maxlength="32" pattern="[A-Za-z0-9_\-]{2,32}" autofocus
                placeholder="yer-name-here">
         {% if error %}
           <p class="error">{{ error }}</p>
