@@ -28,7 +28,7 @@
       <form method="post" action="/handle">
         <label for="handle">Handle</label>
         <input type="text" id="handle" name="handle" required minlength="2"
-               maxlength="32" pattern="[A-Za-z0-9_-]{2,32}" autofocus>
+               maxlength="32" pattern="[A-Za-z0-9_\-]{2,32}" autofocus>
         <input type="hidden" name="next" value="/league/{{ league.slug }}">
         <button type="submit" class="btn">Pick a handle &amp; join</button>
       </form>
