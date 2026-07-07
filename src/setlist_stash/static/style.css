@@ -1093,3 +1093,85 @@ table.stat-table tbody tr:last-child td { border-bottom: 0; }
   white-space: nowrap;
 }
 .setlist-note { margin-top: 0.75rem; font-size: 0.85rem; }
+
+/* ===== Home page rework (ported): hero column, single handle CTA,
+   centered stacked Start-playing button ===== */
+.home-hero {
+  max-width: 640px;
+  margin: 0 auto;
+  text-align: center;
+}
+.home-tagline {
+  margin: 0.4rem 0 1.4rem;
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 1.2rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text);
+}
+/* next-show + beta-notice are already centered widgets; keep them centered
+   inside the hero column regardless of their own max-width. */
+.home-hero .next-show,
+.home-hero .beta-notice {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Single hero CTA: handle input + Start playing, centered. Replaces the
+   old fieldset/legend form chrome on the home page. */
+.handle-cta {
+  max-width: 30rem;
+  margin: 0.5rem auto 1.2rem;
+  text-align: center;
+}
+.handle-cta-label {
+  display: block;
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.handle-cta-row {
+  /* Task: stack the button centered directly under the input (all widths),
+     instead of inline beside it. */
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: center;
+}
+.handle-cta-row input[type="text"] {
+  width: 100%;
+}
+.handle-cta-row .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.handle-cta-help {
+  margin: 0.6rem 0 0;
+}
+
+/* Signed-in welcome card, centered in the hero column. */
+.home-welcome {
+  max-width: 30rem;
+  margin: 0.5rem auto 1.2rem;
+  text-align: center;
+}
+
+/* How it works: centered block below the fold. Headings + the summary line
+   center; bullet lists stay left-aligned for readability. */
+.home-how {
+  max-width: 640px;
+  margin: 1.75rem auto 0;
+  text-align: left;
+}
+.home-how h2 { text-align: center; }
+.home-how .how-it-works-steps { text-align: center; }
+
+@media (max-width: 480px) {
+  .handle-cta-row { flex-direction: column; }
+  .handle-cta-row .btn { width: 100%; }
+}
