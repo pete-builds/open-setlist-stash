@@ -2,9 +2,14 @@
 
 Phase 4 source-of-truth: ``PHASE-4-PLAN.md`` §4.
 
-Default cutoff is 22:00 in ``DEFAULT_LOCK_TZ`` on the show date. Operators
-override per-show via ``prediction_locks.lock_at_override`` (when present,
-that value wins).
+Default cutoff is ``DEFAULT_LOCK_TIME_LOCAL`` interpreted in the show's
+**venue-local** timezone (resolved from the show location; falls back to
+``DEFAULT_LOCK_TZ`` when the location can't be mapped), so ``19:25`` means
+7:25 PM local to the venue regardless of where that is. Operators override
+per-show via ``prediction_locks.lock_at_override`` (when present, that value
+wins). The instant is stored as a UTC ``TIMESTAMPTZ``; it is rendered to
+viewers in ``DISPLAY_TZ`` (Eastern) by the server, so a Central-time show
+locking at 7:25 PM local displays as 8:25 PM EDT.
 
 Show selection for the form (session 1):
 - ``ADMIN_SHOW_DATE`` env var (YYYY-MM-DD) if set: that show is the target.
@@ -55,16 +60,98 @@ class LockState:
     seconds_until_lock: int    # negative when locked
 
 
+# US state (2-letter code or full name) -> predominant IANA timezone. mcp-phish
+# exposes no venue timezone or showtime, so we resolve the anchor zone from the
+# show location string. Covers all 50 states + DC; states that span zones use
+# their predominant zone (good enough for a lock cutoff). Arizona uses
+# America/Phoenix (no DST). Anything unmapped falls back to DEFAULT_LOCK_TZ.
+_STATE_TZ: dict[str, str] = {
+    # Eastern
+    "CT": "America/New_York", "DE": "America/New_York", "DC": "America/New_York",
+    "FL": "America/New_York", "GA": "America/New_York", "IN": "America/New_York",
+    "KY": "America/New_York", "ME": "America/New_York", "MD": "America/New_York",
+    "MA": "America/New_York", "MI": "America/New_York", "NH": "America/New_York",
+    "NJ": "America/New_York", "NY": "America/New_York", "NC": "America/New_York",
+    "OH": "America/New_York", "PA": "America/New_York", "RI": "America/New_York",
+    "SC": "America/New_York", "VT": "America/New_York", "VA": "America/New_York",
+    "WV": "America/New_York",
+    # Central
+    "AL": "America/Chicago", "AR": "America/Chicago", "IA": "America/Chicago",
+    "IL": "America/Chicago", "KS": "America/Chicago", "LA": "America/Chicago",
+    "MN": "America/Chicago", "MO": "America/Chicago", "MS": "America/Chicago",
+    "ND": "America/Chicago", "NE": "America/Chicago", "OK": "America/Chicago",
+    "SD": "America/Chicago", "TN": "America/Chicago", "TX": "America/Chicago",
+    "WI": "America/Chicago",
+    # Mountain (AZ = Phoenix, no DST)
+    "AZ": "America/Phoenix", "CO": "America/Denver", "ID": "America/Denver",
+    "MT": "America/Denver", "NM": "America/Denver", "UT": "America/Denver",
+    "WY": "America/Denver",
+    # Pacific
+    "CA": "America/Los_Angeles", "NV": "America/Los_Angeles",
+    "OR": "America/Los_Angeles", "WA": "America/Los_Angeles",
+    # Non-contiguous
+    "AK": "America/Anchorage", "HI": "Pacific/Honolulu",
+}
+_STATE_NAME_TO_CODE: dict[str, str] = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "district of columbia": "DC", "washington dc": "DC", "florida": "FL",
+    "georgia": "GA", "hawaii": "HI", "idaho": "ID", "illinois": "IL",
+    "indiana": "IN", "iowa": "IA", "kansas": "KS", "kentucky": "KY",
+    "louisiana": "LA", "maine": "ME", "maryland": "MD", "massachusetts": "MA",
+    "michigan": "MI", "minnesota": "MN", "mississippi": "MS", "missouri": "MO",
+    "montana": "MT", "nebraska": "NE", "nevada": "NV", "new hampshire": "NH",
+    "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI",
+    "south carolina": "SC", "south dakota": "SD", "tennessee": "TN",
+    "texas": "TX", "utah": "UT", "vermont": "VT", "virginia": "VA",
+    "washington": "WA", "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+}
+
+
+def resolve_venue_tz(location: str | None, default_tz: str) -> str:
+    """Resolve an IANA timezone for a show from its location string.
+
+    Location looks like ``"Madison, WI"`` (2-letter code) or
+    ``"Madison, Wisconsin"`` (full name), optionally with a trailing country.
+    Returns ``default_tz`` for empty/unmappable locations (e.g. international
+    shows or an empty string), which keeps behavior safe and Eastern-leaning.
+    """
+    if not location or not location.strip():
+        return default_tz
+    parts = [p.strip() for p in location.split(",") if p.strip()]
+    if not parts:
+        return default_tz
+    tail = parts[-1]
+    # Drop a trailing country token so "City, ST, USA" still finds the state.
+    if tail.upper() in {"USA", "US", "U.S.A.", "UNITED STATES"} and len(parts) >= 2:
+        tail = parts[-2]
+    code: str | None = None
+    if len(tail) == 2 and tail.isalpha():
+        code = tail.upper()
+    else:
+        code = _STATE_NAME_TO_CODE.get(tail.lower())
+    if code and code in _STATE_TZ:
+        return _STATE_TZ[code]
+    return default_tz
+
+
 def compute_default_lock_at(
-    show_date: date, settings: Settings, *, now: datetime | None = None
+    show_date: date,
+    settings: Settings,
+    *,
+    venue_tz: str | None = None,
+    now: datetime | None = None,
 ) -> datetime:
     """Return the default cutoff for a show as a UTC TIMESTAMPTZ.
 
-    Default: ``DEFAULT_LOCK_TIME_LOCAL`` in ``DEFAULT_LOCK_TZ`` on
-    ``show_date``. Always returned in UTC.
+    ``DEFAULT_LOCK_TIME_LOCAL`` interpreted in ``venue_tz`` (the show's
+    venue-local zone) when provided, else ``DEFAULT_LOCK_TZ``. Always returned
+    in UTC.
     """
     _ = now  # not needed for default calculation; reserved for future logic
-    tz = ZoneInfo(settings.default_lock_tz)
+    tz = ZoneInfo(venue_tz or settings.default_lock_tz)
     hh, mm = settings.default_lock_time_local.split(":", 1)
     cutoff_local = datetime.combine(show_date, time(int(hh), int(mm)), tzinfo=tz)
     return cutoff_local.astimezone(ZoneInfo("UTC"))
@@ -75,21 +162,37 @@ async def get_or_create_lock(
     show: ShowTarget,
     settings: Settings,
 ) -> LockState:
-    """Read or lazily create the prediction_locks row for a show."""
-    default_lock = compute_default_lock_at(show.show_date, settings)
+    """Read or lazily create the prediction_locks row for a show.
+
+    The lock instant is anchored to the show's venue-local timezone (resolved
+    from ``show.location``) and persisted alongside the resolved zone in
+    ``venue_tz``. On conflict we refresh ``lock_at`` from the freshly resolved
+    zone *unless* an operator has set ``lock_at_override`` (their value always
+    wins), so a location/zone correction propagates to an existing row.
+    """
+    venue_tz = resolve_venue_tz(show.location, settings.default_lock_tz)
+    default_lock = compute_default_lock_at(
+        show.show_date, settings, venue_tz=venue_tz
+    )
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO prediction_locks (show_date, show_id, lock_at, venue_tz)
             VALUES ($1, $2, $3, $4)
             ON CONFLICT (show_date) DO UPDATE
-                SET show_id = COALESCE(prediction_locks.show_id, EXCLUDED.show_id)
+                SET show_id = COALESCE(prediction_locks.show_id, EXCLUDED.show_id),
+                    venue_tz = EXCLUDED.venue_tz,
+                    lock_at = CASE
+                        WHEN prediction_locks.lock_at_override IS NULL
+                        THEN EXCLUDED.lock_at
+                        ELSE prediction_locks.lock_at
+                    END
             RETURNING show_date, lock_at, lock_at_override
             """,
             show.show_date,
             show.show_id,
             default_lock,
-            settings.default_lock_tz,
+            venue_tz,
         )
         if row is None:
             raise RuntimeError("prediction_locks upsert returned no row")
