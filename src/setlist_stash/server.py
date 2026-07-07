@@ -198,7 +198,11 @@ def _gap_label(gap: Any) -> str:
 
 
 def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
-    tz = ZoneInfo(settings.default_lock_tz)
+    # Render in the viewer-facing display tz (Eastern by default), not the
+    # anchor tz the lock was computed in. strftime("%Z") on a ZoneInfo zone is
+    # DST-aware (EDT in summer, EST in winter). lock_at_iso stays a UTC-anchored
+    # ISO instant so the JS countdown is correct regardless of the display label.
+    tz = ZoneInfo(settings.display_tz)
     local = lock.lock_at.astimezone(tz)
     return {
         "is_locked": lock.is_locked,

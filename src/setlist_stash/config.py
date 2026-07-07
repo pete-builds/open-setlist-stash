@@ -114,8 +114,17 @@ class Settings(BaseSettings):
     mcp_rate_limit_per_minute: int = Field(default=60, ge=0)
 
     # --- Showtime lock policy ---
+    # DEFAULT_LOCK_TIME_LOCAL is interpreted in DEFAULT_LOCK_TZ to compute the
+    # stored lock instant (a UTC TIMESTAMPTZ). This is the *anchor* tz — the
+    # zone the wall-clock lock time is expressed in when it's set.
     default_lock_time_local: str = Field(default="22:00")
     default_lock_tz: str = Field(default="America/New_York")
+    # DISPLAY_TZ is the zone lock/show times are *rendered* in for viewers,
+    # independent of the anchor tz above. Defaults to US Eastern; ZoneInfo is
+    # DST-aware, so it renders EDT in summer and EST in winter automatically
+    # (never a hardcoded abbreviation). Most players are Eastern, so times are
+    # shown in Eastern regardless of where the venue is.
+    display_tz: str = Field(default="America/New_York")
 
     # --- Auto-resolve cron ---
     # Legacy (Phase 4 plan §5 Option A naming). Kept for backwards-compat
