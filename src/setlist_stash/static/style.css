@@ -1093,3 +1093,88 @@ table.stat-table tbody tr:last-child td { border-bottom: 0; }
   white-space: nowrap;
 }
 .setlist-note { margin-top: 0.75rem; font-size: 0.85rem; }
+
+/* ---- home hero (single centered column) ---- */
+
+/* Single shared-width column for the ENTIRE homepage: hero (tagline,
+   next-show, CTA, beta notice) and How-it-works both live inside this one
+   wrapper so every block shares the same left/right edges instead of each
+   being independently centered at its own (different) width. */
+.home-page {
+  max-width: 640px;
+  margin: 0 auto;
+}
+.home-hero {
+  text-align: center;
+}
+.home-tagline {
+  margin: 0.4rem 0 1.4rem;
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 1.2rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text);
+}
+/* next-show + beta-notice ship their own max-width (34rem) for use
+   elsewhere in the app; inside the single-column home page they fill the
+   shared .home-page width instead so their edges match How-it-works. */
+.home-page .next-show,
+.home-page .beta-notice {
+  max-width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* Single hero CTA: handle input + Start playing, centered. Replaces the
+   old fieldset/legend form chrome on the home page. */
+.handle-cta {
+  margin: 0.5rem 0 1.2rem;
+  text-align: center;
+}
+.handle-cta-label {
+  display: block;
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.handle-cta-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+  justify-content: center;
+}
+.handle-cta-row input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.handle-cta-row .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.handle-cta-help {
+  margin: 0.6rem 0 0;
+}
+
+/* Signed-in welcome card, full width of the shared home column. */
+.home-welcome {
+  margin: 0.5rem 0 1.2rem;
+  text-align: center;
+}
+
+/* How it works: same shared column, no width of its own. Headings + the
+   summary line center; bullet lists stay left-aligned for readability. */
+.home-how {
+  margin: 1.75rem 0 0;
+  text-align: left;
+}
+.home-how h2 { text-align: center; }
+.home-how .how-it-works-steps { text-align: center; }
+
+@media (max-width: 480px) {
+  .handle-cta-row { flex-direction: column; }
+  .handle-cta-row .btn { width: 100%; }
+}
