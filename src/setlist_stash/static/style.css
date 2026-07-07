@@ -1175,3 +1175,13 @@ table.stat-table tbody tr:last-child td { border-bottom: 0; }
   .handle-cta-row { flex-direction: column; }
   .handle-cta-row .btn { width: 100%; }
 }
+
+
+/* Hamburger robustness: collapse the mobile nav with an id-level selector so a
+   theme's lower-specificity `.topbar nav` rule cannot override it and leave the
+   menu always-expanded (the lot-poster theme did exactly that). #site-nav
+   (1,0,0) outranks any .topbar nav (0,1,1) theme rule regardless of load order. */
+@media (max-width: 640px) {
+  #site-nav { display: none; }
+  #site-nav.nav-open { display: flex; }
+}
