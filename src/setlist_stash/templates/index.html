@@ -1,18 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ site_name }}{% endblock %}
 {% block content %}
-  <h1>{{ site_name }}</h1>
-
-  {# Primary action, above the fold. Signed-in players jump straight to the
-     predict page for the upcoming show; anonymous visitors are sent to the
-     handle form below (they need a handle before they can pick). #}
-  <p class="make-picks-cta" style="margin-top:0.6rem;">
-    {% if current_user and upcoming_show %}
-      <a class="btn btn-primary btn-lg" href="/predict/{{ upcoming_show.show_date }}">🎸 Make your picks</a>
-    {% else %}
-      <a class="btn btn-primary btn-lg" href="#pick-a-handle">🎸 Make your picks</a>
-    {% endif %}
-  </p>
+<div class="home-hero">
+  {# Single centered hero column. The site wordmark is already in the header
+     (base.html .brand), so it is not repeated here. A single one-line tagline
+     replaces the old theme-specific badge row (Lot Only stamp / version
+     sticker / donut). The tagline is band-agnostic, so both deployments
+     render the same clean line. #}
+  <p class="home-tagline">Predict the setlist. Climb the leaderboard.</p>
 
   {% if upcoming_show and upcoming_lock %}
     <div class="next-show" id="next-show">
@@ -38,58 +33,41 @@
     </div>
   {% endif %}
 
-  {# Tagline + beta notice live below the next-show details: context, not the
-     headline action. #}
-  <p class="muted" style="margin-top:0.4rem;">
-    {% if theme_file and "lot-poster" in theme_file %}
-      <span class="stamp stamp-teal">Lot Only</span>
-      <span class="sticker">v{{ version }} BETA</span>
-      <span class="donut" aria-hidden="true"></span>
-    {% endif %}
-    setlist picks &middot; live scoreboard &middot; play with friends
-  </p>
-
-  {% if beta_notice %}
-    <p class="beta-notice"><span class="badge">Beta</span> {{ beta_notice }}</p>
-  {% endif %}
-
   {% if current_user %}
-    <div class="card">
+    {# Signed-in players already have a handle: their single CTA is jumping
+       straight to the pick sheet for the upcoming show. #}
+    <div class="card home-welcome">
       <p>Welcome back, <strong>{{ current_user.handle }}</strong>.</p>
       {% if upcoming_show %}
-        <p>Next show on the board: <strong>{{ upcoming_show.show_date }}</strong>
-          {% if upcoming_show.venue_name %}&middot; {{ upcoming_show.venue_name }}{% endif %}
-          {% if upcoming_show.location %} ({{ upcoming_show.location }}){% endif %}.
+        <p>
+          <a class="btn btn-primary btn-lg" href="/predict/{{ upcoming_show.show_date }}">🎸 Make your picks</a>
         </p>
         {% if enable_games %}
-        <p>
-          <a class="btn" href="/leagues">Your games</a>
-        </p>
+        <p><a class="btn" href="/leagues">Your games</a></p>
         {% endif %}
       {% else %}
         <p class="muted">No upcoming show on the board yet. Check back soon.</p>
         {% if enable_games %}
-        <p>
-          <a class="btn" href="/leagues">Your games</a>
-        </p>
+        <p><a class="btn" href="/leagues">Your games</a></p>
         {% endif %}
       {% endif %}
     </div>
   {% else %}
-    <h2 id="pick-a-handle">Pick a handle</h2>
-    <p>Anonymous play. {{ handle_help }}</p>
-    <form method="post" action="/handle">
-      <fieldset>
-        <legend>Sign on</legend>
-        <label for="handle">Handle</label>
+    {# Single hero CTA. A handle is required before you can pick, so lead with
+       it: the handle input + "Start playing" IS the primary call to action.
+       The old standalone "Make your picks" button has been removed. #}
+    <form class="handle-cta" method="post" action="/handle">
+      <label for="handle" class="handle-cta-label">Enter a handle to start playing</label>
+      <div class="handle-cta-row">
         <input type="text" id="handle" name="handle" required minlength="2"
-               maxlength="32" pattern="[A-Za-z0-9_\-]{2,32}" autofocus
+               maxlength="32" pattern="[A-Za-z0-9_\-]{2,32}"
                placeholder="yer-name-here">
-        {% if error %}
-          <p class="error">{{ error }}</p>
-        {% endif %}
-        <button type="submit" class="btn">Start playing</button>
-      </fieldset>
+        <button type="submit" class="btn btn-primary btn-lg">Start playing</button>
+      </div>
+      {% if error %}
+        <p class="error">{{ error }}</p>
+      {% endif %}
+      <p class="handle-cta-help muted">Anonymous play. {{ handle_help }}</p>
     </form>
     {% if email_enabled %}
     <p class="muted">
@@ -99,87 +77,92 @@
     {% endif %}
   {% endif %}
 
-  <section class="card" id="how-it-works" style="margin-top:1.5rem;">
-    <h2>How it works</h2>
-    {% if enable_games %}
-    <p class="how-it-works-steps">
-      <strong>Pick songs → share your game → watch the scoreboard.</strong>
-      Make your picks, tap Share to send your game link to friends, and everyone
-      who opens it joins the same scoreboard. Scores start at 0 and climb live as
-      songs get played.
-    </p>
-    <p>
-      <strong>{{ site_name }}</strong> is a free setlist-prediction game. Before a
-      show starts, you guess what the band will play. After the show, your picks
-      are scored against the real setlist and you climb the scoreboard — on your
-      own or in a game with friends.
-    </p>
-    {% else %}
-    <p class="how-it-works-steps">
-      <strong>Pick songs → watch the scoreboard.</strong>
-      Make your picks before the show, then watch the leaderboard. Scores start at
-      0 and climb live as songs get played.
-    </p>
-    <p>
-      <strong>{{ site_name }}</strong> is a free setlist-prediction game. Before a
-      show starts, you guess what the band will play. After the show, your picks
-      are scored against the real setlist and everyone climbs the same
-      leaderboard.
-    </p>
-    {% endif %}
-
-    <h3>Making picks</h3>
-    <ul>
-      <li>Pick up to 5 songs, and tap one as your encore call.</li>
-      <li>Picks lock at showtime and can't be changed once the show starts.</li>
-    </ul>
-
-    <h3>How scoring works</h3>
-    <ul>
-      <li>Each song pick that gets played: <strong>2 points</strong>.</li>
-      <li>Your encore call lands in the encore: <strong>+5</strong>.</li>
-      <li>A pick that doesn't get played scores 0; an encore call that plays outside the encore still earns its 2.</li>
-    </ul>
-  </section>
-
-  {% if upcoming_show and upcoming_lock and not upcoming_lock.is_locked %}
-  <script>
-    // Home-page lock countdown. Vanilla JS, mirrors the predict page ticker.
-    // On reaching the lock, swaps the line to a "scoring live" message (no
-    // reload — this is the public landing page).
-    (function () {
-      var el = document.getElementById('home-lock-countdown');
-      if (!el) return;
-      var lockAt = new Date(el.dataset.lockAt).getTime();
-      if (isNaN(lockAt)) return;
-      var line = el.closest('.next-show-lock');
-      function pad(n) { return n < 10 ? '0' + n : '' + n; }
-      function fmt(seconds) {
-        if (seconds < 0) seconds = 0;
-        var d = Math.floor(seconds / 86400);
-        var h = Math.floor((seconds % 86400) / 3600);
-        var m = Math.floor((seconds % 3600) / 60);
-        var s = Math.floor(seconds % 60);
-        if (d > 0) return d + 'd ' + pad(h) + 'h ' + pad(m) + 'm ' + pad(s) + 's';
-        if (h > 0) return h + 'h ' + pad(m) + 'm ' + pad(s) + 's';
-        if (m > 0) return m + 'm ' + pad(s) + 's';
-        return s + 's';
-      }
-      var locked = false;
-      function tick() {
-        var remaining = Math.floor((lockAt - Date.now()) / 1000);
-        if (remaining <= 0) {
-          if (!locked) {
-            locked = true;
-            if (line) line.textContent = 'Picks locked · scoring live';
-          }
-          return;
-        }
-        el.textContent = fmt(remaining);
-      }
-      tick();
-      setInterval(tick, 1000);
-    })();
-  </script>
+  {% if beta_notice %}
+    <p class="beta-notice"><span class="badge">Beta</span> {{ beta_notice }}</p>
   {% endif %}
+</div>
+
+<section class="card home-how" id="how-it-works">
+  <h2>How it works</h2>
+  {% if enable_games %}
+  <p class="how-it-works-steps">
+    <strong>Pick songs → share your game → watch the scoreboard.</strong>
+    Make your picks, tap Share to send your game link to friends, and everyone
+    who opens it joins the same scoreboard. Scores start at 0 and climb live as
+    songs get played.
+  </p>
+  <p>
+    <strong>{{ site_name }}</strong> is a free setlist-prediction game. Before a
+    show starts, you guess what the band will play. After the show, your picks
+    are scored against the real setlist and you climb the scoreboard — on your
+    own or in a game with friends.
+  </p>
+  {% else %}
+  <p class="how-it-works-steps">
+    <strong>Pick songs → watch the scoreboard.</strong>
+    Make your picks before the show, then watch the leaderboard. Scores start at
+    0 and climb live as songs get played.
+  </p>
+  <p>
+    <strong>{{ site_name }}</strong> is a free setlist-prediction game. Before a
+    show starts, you guess what the band will play. After the show, your picks
+    are scored against the real setlist and everyone climbs the same
+    leaderboard.
+  </p>
+  {% endif %}
+
+  <h3>Making picks</h3>
+  <ul>
+    <li>Pick up to 5 songs, and tap one as your encore call.</li>
+    <li>Picks lock at showtime and can't be changed once the show starts.</li>
+  </ul>
+
+  <h3>How scoring works</h3>
+  <ul>
+    <li>Each song pick that gets played: <strong>2 points</strong>.</li>
+    <li>Your encore call lands in the encore: <strong>+5</strong>.</li>
+    <li>A pick that doesn't get played scores 0; an encore call that plays outside the encore still earns its 2.</li>
+  </ul>
+</section>
+
+{% if upcoming_show and upcoming_lock and not upcoming_lock.is_locked %}
+<script>
+  // Home-page lock countdown. Vanilla JS, mirrors the predict page ticker.
+  // On reaching the lock, swaps the line to a "scoring live" message (no
+  // reload — this is the public landing page).
+  (function () {
+    var el = document.getElementById('home-lock-countdown');
+    if (!el) return;
+    var lockAt = new Date(el.dataset.lockAt).getTime();
+    if (isNaN(lockAt)) return;
+    var line = el.closest('.next-show-lock');
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function fmt(seconds) {
+      if (seconds < 0) seconds = 0;
+      var d = Math.floor(seconds / 86400);
+      var h = Math.floor((seconds % 86400) / 3600);
+      var m = Math.floor((seconds % 3600) / 60);
+      var s = Math.floor(seconds % 60);
+      if (d > 0) return d + 'd ' + pad(h) + 'h ' + pad(m) + 'm ' + pad(s) + 's';
+      if (h > 0) return h + 'h ' + pad(m) + 'm ' + pad(s) + 's';
+      if (m > 0) return m + 'm ' + pad(s) + 's';
+      return s + 's';
+    }
+    var locked = false;
+    function tick() {
+      var remaining = Math.floor((lockAt - Date.now()) / 1000);
+      if (remaining <= 0) {
+        if (!locked) {
+          locked = true;
+          if (line) line.textContent = 'Picks locked · scoring live';
+        }
+        return;
+      }
+      el.textContent = fmt(remaining);
+    }
+    tick();
+    setInterval(tick, 1000);
+  })();
+</script>
+{% endif %}
 {% endblock %}
