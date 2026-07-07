@@ -14,6 +14,7 @@ email, post-lock assist views. See PHASE-4-PLAN.md §9.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import AsyncIterator
@@ -212,6 +213,39 @@ def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
         "lock_at_iso": lock.lock_at.isoformat(),
         "seconds_until_lock": max(lock.seconds_until_lock, 0),
     }
+
+
+async def _resolve_song_titles(
+    slugs: list[str], settings: Settings
+) -> dict[str, str]:
+    """Best-effort slug -> display title via mcp-phish; falls back to the slug.
+
+    Labels a returning user's pre-filled picks in the edit form. Never raises:
+    if upstream is unavailable each slug maps to itself, so the form still
+    works (the hidden slug, not the visible title, is what the submit ships).
+    """
+    result: dict[str, str] = {s: s for s in slugs}
+    if not slugs:
+        return result
+
+    async def _one(mcp: McpPhishClient, slug: str) -> tuple[str, str]:
+        try:
+            song = await mcp.get_song(slug)
+            return slug, str(song.get("title") or slug)
+        except Exception:  # noqa: BLE001 - best-effort labeling only
+            return slug, slug
+
+    try:
+        async with McpPhishClient(
+            settings.mcp_phish_url,
+            timeout_seconds=settings.mcp_phish_timeout_seconds,
+        ) as mcp:
+            pairs = await asyncio.gather(*(_one(mcp, s) for s in slugs))
+        for slug, title in pairs:
+            result[slug] = title
+    except McpPhishError:
+        pass
+    return result
 
 
 def build_app(
@@ -496,6 +530,21 @@ def build_app(
         )
         lock = await get_or_create_lock(pool, target, cfg)
         existing = await get_user_prediction(pool, user.id, show_date)
+        # Pre-load a returning user's picks into the editable form (pre-lock
+        # only; once locked the template shows a read-only view). form_values
+        # seeds the pick slugs + encore slot; prefill carries the resolved song
+        # titles so each slot's datalist has its option (the picker keeps a
+        # pre-filled slug on blur only when it matches an option).
+        form_values: dict[str, str] = {}
+        prefill: dict[str, dict[str, str]] = {}
+        if existing is not None and not lock.is_locked:
+            titles = await _resolve_song_titles(existing.pick_song_slugs, cfg)
+            for i, slug in enumerate(existing.pick_song_slugs, start=1):
+                slot = f"pick_{i}"
+                form_values[slot] = slug
+                prefill[slot] = {"slug": slug, "title": titles.get(slug, slug)}
+                if slug == existing.encore_slug:
+                    form_values["encore_pick"] = slot
         return _render(
             request,
             "predict.html",
@@ -503,7 +552,8 @@ def build_app(
             show=show,
             lock=_format_lock(lock, cfg),
             existing=existing,
-            form_values={},
+            form_values=form_values,
+            prefill=prefill,
             bad_slugs=[],
         )
 

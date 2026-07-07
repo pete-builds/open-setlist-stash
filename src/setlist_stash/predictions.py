@@ -4,12 +4,16 @@ Submissions:
     - Validate slugs (1 to 5 picks; one of them is the required encore call).
     - Refuse if ``prediction_locks.lock_at`` has passed (DB trigger is the
       backstop, but we surface a clean error first).
-    - Insert. The (user_id, show_date) UNIQUE constraint prevents
-      double-submits.
+    - Upsert. Picks are editable until lock: a returning user before the
+      cutoff overwrites their existing row (one row per (user_id, show_date)).
+      The migration-002 lock-guard trigger blocks any pick change on or after
+      lock_at, so post-lock edits fail server-side even if the app check is
+      bypassed.
 
 Reads:
-    - ``get_user_prediction(show_date, user_id)`` for the "you already
-      submitted" view.
+    - ``get_user_prediction(show_date, user_id)`` to pre-load a returning
+      user's current picks into the editable form (or the read-only view
+      once locked).
 """
 
 from __future__ import annotations
@@ -73,11 +77,17 @@ async def insert_prediction(
     pick_song_slugs: list[str],
     encore_slug: str | None,
 ) -> int:
-    """Insert a prediction. Raises PredictionLocked / PredictionDuplicate.
+    """Upsert a prediction (editable until lock). Raises PredictionLocked.
+
+    Picks are editable up to ``lock_at``: on conflict with the existing
+    ``(user_id, show_date)`` row we overwrite the pick columns and bump
+    ``submitted_at``. On or after lock, the migration-002 lock-guard trigger
+    rejects the change (pick columns differ), which surfaces as
+    ``PredictionLocked``.
 
     ``opener_slug`` / ``closer_slug`` are retired from the game model but the
     columns (and the migration-002 change-detection trigger) still reference
-    them, so we always insert NULL for both.
+    them, so we always write NULL for both.
     """
     async with pool.acquire() as conn:
         try:
@@ -88,6 +98,12 @@ async def insert_prediction(
                     opener_slug, closer_slug, encore_slug
                 )
                 VALUES ($1, $2, $3, NULL, NULL, $4)
+                ON CONFLICT (user_id, show_date) DO UPDATE
+                    SET pick_song_slugs = EXCLUDED.pick_song_slugs,
+                        opener_slug = EXCLUDED.opener_slug,
+                        closer_slug = EXCLUDED.closer_slug,
+                        encore_slug = EXCLUDED.encore_slug,
+                        submitted_at = now()
                 RETURNING id
                 """,
                 user_id,
@@ -96,6 +112,7 @@ async def insert_prediction(
                 encore_slug,
             )
         except asyncpg.UniqueViolationError as exc:
+            # No longer expected (upsert), kept as a defensive backstop.
             raise PredictionDuplicate(
                 "You already submitted a prediction for this show."
             ) from exc
