@@ -26,10 +26,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import uvicorn
+from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import FastAPI, Form, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from setlist_stash import __version__
 from setlist_stash.auth import (
@@ -49,6 +51,10 @@ from setlist_stash.auth_email import (
     request_email_link,
     request_login_link,
     verify_token,
+)
+from setlist_stash.auth_google import (
+    GoogleLinkConflict,
+    resolve_google_identity,
 )
 from setlist_stash.blog import get_post, load_posts
 from setlist_stash.config import Settings, get_settings
@@ -283,6 +289,12 @@ def build_app(
     # provider is disabled (default), so the email entry points disappear for
     # any deployment without email configured.
     templates.env.globals["email_enabled"] = provider.name != "disabled"
+    # Whether the "Sign in with Google" entry points render at all. True only
+    # when a Google OAuth client is fully configured for this deployment; empty
+    # (the default) leaves every Google button off and the /auth/google/* routes
+    # redirect home — so the OSS image, the Wappy sibling, and any third-party
+    # self-host stay unaffected until they opt in (Phase 1 Google SSO).
+    templates.env.globals["google_oauth_enabled"] = cfg.google_oauth_enabled
     # Whether to render the nav "Blog" link. True only when the bind-mounted
     # BLOG_DIR holds at least one parseable post. Empty/missing dir (the Phish
     # demo, third-party self-host) leaves the link off entirely. Evaluated at
@@ -315,6 +327,23 @@ def build_app(
         )
     mcp_rate_limiter = FixedWindowRateLimiter(cfg.mcp_rate_limit_per_minute)
 
+    # Google SSO (Phase 1): register the OIDC client only when configured.
+    # Authlib pulls Google's discovery document + JWKS lazily on first use and
+    # verifies the id_token signature/claims for us. When disabled (default),
+    # ``oauth`` stays None and the /auth/google/* routes redirect home.
+    oauth: OAuth | None = None
+    if cfg.google_oauth_enabled:
+        oauth = OAuth()
+        oauth.register(
+            name="google",
+            client_id=cfg.google_client_id,
+            client_secret=cfg.google_client_secret.get_secret_value(),
+            server_metadata_url=(
+                "https://accounts.google.com/.well-known/openid-configuration"
+            ),
+            client_kwargs={"scope": "openid email profile"},
+        )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # Startup: pool + migrations.
@@ -334,6 +363,20 @@ def build_app(
         version=__version__,
         description="Open-source setlist prediction game.",
         lifespan=lifespan,
+    )
+
+    # Starlette session cookie used ONLY to carry the OAuth ``state``/``nonce``
+    # across the Google redirect (Phase 1 Google SSO). It is short-lived and
+    # completely separate from the primary ``phishgame_session`` signed-cookie
+    # identity, which is untouched. Keyed with the same session_secret so no new
+    # secret is needed; ``https_only`` follows COOKIE_SECURE.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=cfg.session_secret.get_secret_value(),
+        session_cookie="phishgame_oauth",
+        max_age=600,  # 10 min: only needs to survive the round-trip to Google
+        same_site="lax",
+        https_only=cfg.cookie_secure,
     )
 
     # Per-IP rate limit, scoped to the public /mcp proxy ONLY. The game UI,
@@ -381,7 +424,7 @@ def build_app(
             max_age=COOKIE_MAX_AGE_SECONDS,
             httponly=True,
             samesite="lax",
-            secure=False,  # LAN/Tailscale; Phase 6 enables Secure under HTTPS
+            secure=cfg.cookie_secure,  # True on HTTPS deployments (COOKIE_SECURE)
         )
 
     # ----- routes -----------------------------------------------------------
@@ -1607,7 +1650,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return redirect
 
@@ -1804,7 +1847,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return redirect
 
@@ -1850,7 +1893,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return redirect
 
@@ -1886,6 +1929,114 @@ def build_app(
         return RedirectResponse(
             "/leagues", status_code=status.HTTP_303_SEE_OTHER
         )
+
+    # ----- Phase 1: Google SSO + logout -------------------------------------
+
+    def _oauth_error_page(
+        request: Request,
+        *,
+        message: str,
+        current: Any,
+        code: int,
+    ) -> Response:
+        """Render the shared auth-error template for a failed Google sign-in."""
+        resp = _render(
+            request,
+            "auth_verify_error.html",
+            current_user=current,
+            message=message,
+            ttl_hours=cfg.magic_link_ttl_hours,
+            signed_in=current is not None,
+        )
+        resp.status_code = code
+        return resp
+
+    @app.get("/auth/google/start")
+    async def google_start(request: Request) -> Response:
+        """Kick off the Google OAuth redirect (scope: openid email profile).
+
+        Redirects home when Google SSO is not configured for this deployment.
+        """
+        if oauth is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        # Authlib stashes state + nonce in the (session-middleware) cookie and
+        # returns the redirect to Google's consent screen.
+        return await oauth.google.authorize_redirect(  # type: ignore[no-any-return]
+            request, cfg.google_redirect_uri
+        )
+
+    @app.get("/auth/google/callback")
+    async def google_callback(request: Request) -> Response:
+        """Handle Google's redirect back: verify the id_token, resolve the
+        account, set the session cookie, and land on /account.
+        """
+        if oauth is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        current = await _resolve_user(request)
+        try:
+            # Authlib verifies the id_token signature + claims (aud/iss/exp/
+            # nonce) against Google's JWKS and returns the parsed OIDC claims
+            # under token["userinfo"].
+            token = await oauth.google.authorize_access_token(request)
+        except OAuthError as exc:
+            logger.warning("google oauth error", extra={"err": str(exc)})
+            return _oauth_error_page(
+                request,
+                message="Google sign-in failed or was cancelled. Please try again.",
+                current=current,
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        userinfo = token.get("userinfo") or {}
+        google_sub = str(userinfo.get("sub") or "")
+        if not google_sub:
+            return _oauth_error_page(
+                request,
+                message="Google did not return an account id. Please try again.",
+                current=current,
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        email = userinfo.get("email")
+        email_verified = bool(userinfo.get("email_verified"))
+        pool = get_pool()
+        try:
+            user_id = await resolve_google_identity(
+                pool,
+                google_sub=google_sub,
+                email=email,
+                email_verified=email_verified,
+                current=current,
+            )
+        except GoogleLinkConflict as exc:
+            return _oauth_error_page(
+                request,
+                message=str(exc),
+                current=current,
+                code=status.HTTP_409_CONFLICT,
+            )
+        resp: Response = RedirectResponse(
+            "/account", status_code=status.HTTP_303_SEE_OTHER
+        )
+        _set_session_cookie(resp, user_id)
+        resp.set_cookie(
+            "phishgame_flash",
+            "Signed in with Google.",
+            max_age=30,
+            httponly=True,
+            samesite="lax",
+            secure=cfg.cookie_secure,
+        )
+        return resp
+
+    @app.post("/logout")
+    async def logout(request: Request) -> Response:
+        """Clear the session identity cookie and return home. Idempotent."""
+        resp: Response = RedirectResponse(
+            "/", status_code=status.HTTP_303_SEE_OTHER
+        )
+        resp.delete_cookie(
+            COOKIE_NAME, samesite="lax", secure=cfg.cookie_secure
+        )
+        return resp
 
     # ----- Phase 4b: magic-link email auth ----------------------------------
 
@@ -2093,7 +2244,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return resp
 
@@ -2106,12 +2257,17 @@ def build_app(
         pool = get_pool()
         status_data = await get_email_status(pool, user.id)
         memberships = await list_user_leagues(pool, user.id)
+        async with pool.acquire() as conn:
+            google_sub = await conn.fetchval(
+                "SELECT google_sub FROM users WHERE id = $1", user.id
+            )
         flash = request.cookies.get("phishgame_flash")
         resp = _render(
             request,
             "account.html",
             current_user=user,
             status=status_data,
+            google_linked=google_sub is not None,
             flash=flash,
             leagues=memberships,
         )

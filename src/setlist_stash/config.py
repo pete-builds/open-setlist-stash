@@ -163,6 +163,21 @@ class Settings(BaseSettings):
 
     # --- Session / handle ---
     session_secret: SecretStr = Field(default=SecretStr("dev-only-do-not-use-in-prod"))
+    # Send the ``Secure`` flag on session/flash cookies. False (the default)
+    # keeps LAN/Tailscale-over-HTTP dev working; set COOKIE_SECURE=true on any
+    # HTTPS deployment (e.g. tweezerpicks.com behind Cloudflare) so the cookies
+    # are only ever sent over TLS.
+    cookie_secure: bool = Field(default=False)
+
+    # --- Google SSO (Phase 1) ---
+    # OAuth 2.0 / OpenID Connect "Web application" client credentials. Both
+    # empty (the default) hides "Sign in with Google" entirely, so the OSS
+    # image, the Wappy sibling deployment, and any third-party self-host stay
+    # unaffected until they provision their own client (same empty-string-means-
+    # disabled gating idiom used for MCP_PUBLIC_URL etc). The redirect URI is
+    # derived from BASE_URL as ``{base_url}/auth/google/callback``.
+    google_client_id: str = Field(default="")
+    google_client_secret: SecretStr = Field(default=SecretStr(""))
 
     # --- Magic-link email (Phase 4b) ---
     # Provider selector. ``disabled`` (default) hides the email UI behind a
@@ -206,6 +221,23 @@ class Settings(BaseSettings):
     admin_show_date: date | None = Field(default=None)
     admin_show_venue: str | None = Field(default=None)
     admin_show_location: str | None = Field(default=None)
+
+    @property
+    def google_oauth_enabled(self) -> bool:
+        """True only when a Google OAuth client is fully configured.
+
+        Mirrors the empty-string-means-disabled gate used elsewhere: when
+        either the id or the secret is unset, the "Sign in with Google" entry
+        points disappear and the /auth/google/* routes redirect home.
+        """
+        return bool(
+            self.google_client_id and self.google_client_secret.get_secret_value()
+        )
+
+    @property
+    def google_redirect_uri(self) -> str:
+        """The OAuth redirect URI, derived from ``base_url``."""
+        return f"{self.base_url.rstrip('/')}/auth/google/callback"
 
     @property
     def pg_dsn(self) -> str:

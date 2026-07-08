@@ -70,6 +70,12 @@
       {% endif %}
       <p class="handle-cta-help muted">Anonymous play. {{ handle_help }}</p>
     </form>
+    {% if google_oauth_enabled %}
+    <p class="muted">
+      Or <a href="/auth/google/start">sign in with Google</a> to carry your
+      account across devices.
+    </p>
+    {% endif %}
     {% if email_enabled %}
     <p class="muted">
       Already have a handle attached to an email?

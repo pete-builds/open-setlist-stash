@@ -33,6 +33,7 @@ dependencies = [
     "python-dotenv==1.2.2",
     "aiosmtplib==5.1.2",
     "markdown==3.10.2",
+    "authlib==1.7.2",
 ]
 
 [project.optional-dependencies]
@@ -132,4 +133,10 @@ explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = "asyncpg.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Authlib ships no type stubs / py.typed. We use it only in the route layer
+# for the Google OIDC redirect + id_token verification.
+module = "authlib.*"
 ignore_missing_imports = true
