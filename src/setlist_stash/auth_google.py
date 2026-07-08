@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
@@ -48,6 +49,20 @@ class GoogleLinkConflict(ValueError):
     belongs to a *different* user, or when the current handle is already linked
     to a different Google account. Surfaced to the player as a friendly error.
     """
+
+
+@dataclass(frozen=True)
+class GoogleResolution:
+    """Outcome of ``resolve_google_identity``.
+
+    ``is_new`` is True only when a brand-new user row was created for this
+    Google sign-in (resolver case 4). The route uses it to route first-time
+    users to the "choose your handle" step instead of finalizing the
+    auto-generated placeholder handle.
+    """
+
+    user_id: int
+    is_new: bool
 
 
 def _seed_to_base(seed: str) -> str:
@@ -142,11 +157,12 @@ async def resolve_google_identity(
     email: str | None,
     email_verified: bool,
     current: CurrentUser | None,
-) -> int:
-    """Resolve a verified Google identity to a ``users.id``. See module docs.
+) -> GoogleResolution:
+    """Resolve a verified Google identity to a user. See module docs.
 
-    Raises ``GoogleLinkConflict`` when the requested link collides with another
-    account. Raises ``ValueError`` if ``google_sub`` is empty.
+    Returns a ``GoogleResolution`` (user id + whether the row was freshly
+    created). Raises ``GoogleLinkConflict`` when the requested link collides
+    with another account, or ``ValueError`` if ``google_sub`` is empty.
     """
     google_sub = (google_sub or "").strip()
     if not google_sub:
@@ -166,7 +182,7 @@ async def resolve_google_identity(
                     "That Google account is already linked to another handle."
                 )
             if owner_id == current.id:
-                return current.id  # already linked; idempotent
+                return GoogleResolution(current.id, is_new=False)  # idempotent
             row = await conn.fetchrow(
                 "SELECT google_sub FROM users WHERE id = $1", current.id
             )
@@ -183,11 +199,11 @@ async def resolve_google_identity(
                 email_verified=email_verified,
             )
             logger.info("linked google to existing handle", extra={"user_id": current.id})
-            return current.id
+            return GoogleResolution(current.id, is_new=False)
 
         # --- Case 2: returning Google user ---
         if owner_id is not None:
-            return owner_id
+            return GoogleResolution(owner_id, is_new=False)
 
         # --- Case 3: verified-email match on an un-linked row ---
         if norm_email and email_verified:
@@ -211,7 +227,7 @@ async def resolve_google_identity(
                     email_verified=email_verified,
                 )
                 logger.info("linked google via verified email", extra={"user_id": user_id})
-                return user_id
+                return GoogleResolution(user_id, is_new=False)
 
     # --- Case 4: brand-new user ---
     seed = norm_email.split("@", 1)[0] if norm_email else google_sub
@@ -232,5 +248,5 @@ async def resolve_google_identity(
                 email_verified=email_verified,
             )
         logger.info("created new user via google", extra={"user_id": user_id})
-        return user_id
+        return GoogleResolution(user_id, is_new=True)
     raise last_exc or HandleError("could not allocate a unique handle")

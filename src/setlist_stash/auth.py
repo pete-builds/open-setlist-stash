@@ -95,6 +95,36 @@ async def create_user(pool: asyncpg.Pool[Any], handle: str) -> int:
         return int(row["id"])
 
 
+async def update_handle(
+    pool: asyncpg.Pool[Any], user_id: int, new_handle: str
+) -> str:
+    """Rename a user's handle. Returns the canonical (trimmed) handle.
+
+    Mirrors ``create_user``: validate, then update, translating a unique
+    violation into a friendly ``HandleError``. Lets any signed-in user (handle,
+    email, or Google) choose their own handle.
+    """
+    canonical = validate_handle(new_handle)
+    async with pool.acquire() as conn:
+        try:
+            row = await conn.fetchrow(
+                """
+                UPDATE users
+                   SET handle = $2, handle_lower = $3
+                 WHERE id = $1
+                RETURNING id
+                """,
+                user_id,
+                canonical,
+                canonical.lower(),
+            )
+        except asyncpg.UniqueViolationError as exc:
+            raise HandleError(f"Handle '{canonical}' is already taken.") from exc
+        if row is None:
+            raise HandleError("Could not update handle (user not found).")
+    return canonical
+
+
 async def get_user_by_id(
     pool: asyncpg.Pool[Any], user_id: int
 ) -> CurrentUser | None:

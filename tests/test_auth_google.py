@@ -180,7 +180,8 @@ async def test_resolve_case1_links_to_current_handle(
         email_verified=True,
         current=current,
     )
-    assert resolved == uid  # same row, not a new user
+    assert resolved.user_id == uid  # same row, not a new user
+    assert resolved.is_new is False
     row = await _fetch_user(pg_pool, uid)
     assert row["google_sub"] == "google-sub-111"
     # Row had no email, so Google's verified email populates it.
@@ -232,7 +233,8 @@ async def test_resolve_case2_returns_existing_sub_owner(
         email_verified=True,
         current=None,
     )
-    assert resolved == uid
+    assert resolved.user_id == uid
+    assert resolved.is_new is False
 
 
 @requires_pg
@@ -254,7 +256,8 @@ async def test_resolve_case3_links_via_verified_email(
         email_verified=True,
         current=None,
     )
-    assert resolved == uid
+    assert resolved.user_id == uid
+    assert resolved.is_new is False
     row = await _fetch_user(pg_pool, uid)
     assert row["google_sub"] == "google-sub-444"
 
@@ -277,8 +280,9 @@ async def test_resolve_case3_skipped_when_email_unverified(
         email_verified=False,  # Google says not verified
         current=None,
     )
-    assert resolved != existing  # a fresh user was created
-    new_row = await _fetch_user(pg_pool, resolved)
+    assert resolved.user_id != existing  # a fresh user was created
+    assert resolved.is_new is True
+    new_row = await _fetch_user(pg_pool, resolved.user_id)
     assert new_row["google_sub"] == "google-sub-555"
     # The existing user's email was never appropriated.
     assert new_row["email"] != "taken@example.com"
@@ -299,7 +303,8 @@ async def test_resolve_case4_creates_new_user_from_email(
         email_verified=True,
         current=None,
     )
-    row = await _fetch_user(pg_pool, resolved)
+    assert resolved.is_new is True
+    row = await _fetch_user(pg_pool, resolved.user_id)
     assert row["google_sub"] == "google-sub-666"
     assert row["handle"].lower().startswith("brandnew")
     assert row["email"] == "brandnew@example.com"
@@ -320,7 +325,7 @@ async def test_resolve_case4_new_user_handle_dedupes(
         email_verified=True,
         current=None,
     )
-    row = await _fetch_user(pg_pool, resolved)
+    row = await _fetch_user(pg_pool, resolved.user_id)
     assert row["handle"] == "dupe-2"
 
 

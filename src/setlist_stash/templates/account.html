@@ -7,7 +7,8 @@
   {% endif %}
 
   <div class="card">
-    <p>Handle: <strong>{{ current_user.handle }}</strong></p>
+    <p>Handle: <strong>{{ current_user.handle }}</strong>
+       <a class="btn" href="/account/handle">Change handle</a></p>
     {% if email_enabled %}
       {% if status.verified %}
         <p>Email: <strong>{{ status.masked }}</strong> <span class="me-tag">verified</span></p>

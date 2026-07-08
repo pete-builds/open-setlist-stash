@@ -42,6 +42,7 @@ from setlist_stash.auth import (
     create_user,
     current_user,
     sign_user_id,
+    update_handle,
     validate_handle,
 )
 from setlist_stash.auth_email import (
@@ -1999,7 +2000,7 @@ def build_app(
         email_verified = bool(userinfo.get("email_verified"))
         pool = get_pool()
         try:
-            user_id = await resolve_google_identity(
+            resolution = await resolve_google_identity(
                 pool,
                 google_sub=google_sub,
                 email=email,
@@ -2013,10 +2014,21 @@ def build_app(
                 current=current,
                 code=status.HTTP_409_CONFLICT,
             )
-        resp: Response = RedirectResponse(
+        # A brand-new Google account gets an auto-generated PROVISIONAL handle.
+        # Sign them in, then send them to the "choose your handle" step with the
+        # suggestion pre-filled and editable — nobody is forced to keep the
+        # placeholder. Existing accounts (link / returning / email-match) keep
+        # their handle and go straight to /account.
+        if resolution.is_new:
+            resp = RedirectResponse(
+                "/account/handle?new=1", status_code=status.HTTP_303_SEE_OTHER
+            )
+            _set_session_cookie(resp, resolution.user_id)
+            return resp
+        resp = RedirectResponse(
             "/account", status_code=status.HTTP_303_SEE_OTHER
         )
-        _set_session_cookie(resp, user_id)
+        _set_session_cookie(resp, resolution.user_id)
         resp.set_cookie(
             "phishgame_flash",
             "Signed in with Google.",
@@ -2274,6 +2286,62 @@ def build_app(
         if flash:
             resp.delete_cookie("phishgame_flash")
         return resp
+
+    @app.get("/account/handle", response_class=HTMLResponse)
+    async def account_handle_form(
+        request: Request, new: int = Query(0)
+    ) -> Response:
+        """Form to choose / change your handle. Sign-in required.
+
+        ``?new=1`` (used right after a first-time Google sign-in) shows a
+        welcome prompt with the auto-suggested handle pre-filled and editable,
+        so nobody is stuck with the placeholder.
+        """
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        return _render(
+            request,
+            "account_handle.html",
+            current_user=user,
+            is_new=bool(new),
+            handle_help=HANDLE_HELP,
+        )
+
+    @app.post("/account/handle")
+    async def account_handle_submit(
+        request: Request, handle: str = Form(...)
+    ) -> Response:
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        pool = get_pool()
+        try:
+            new_handle = await update_handle(pool, user.id, handle)
+        except HandleError as exc:
+            resp = _render(
+                request,
+                "account_handle.html",
+                current_user=user,
+                is_new=False,
+                handle_help=HANDLE_HELP,
+                error=str(exc),
+                attempted=handle,
+            )
+            resp.status_code = status.HTTP_400_BAD_REQUEST
+            return resp
+        redirect: Response = RedirectResponse(
+            "/account", status_code=status.HTTP_303_SEE_OTHER
+        )
+        redirect.set_cookie(
+            "phishgame_flash",
+            f"Handle updated to {new_handle}.",
+            max_age=30,
+            httponly=True,
+            samesite="lax",
+            secure=cfg.cookie_secure,
+        )
+        return redirect
 
     # ----- blog (deployment-specific content, mounted at BLOG_DIR) ----------
 
