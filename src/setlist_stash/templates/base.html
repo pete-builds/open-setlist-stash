@@ -51,8 +51,7 @@
         {% if enable_games %}<a href="/leagues">Games</a>{% endif %}
         <a href="/account">Account</a>
         <form method="post" action="/logout" class="nav-logout">
-          <button type="submit" class="nav-logout-btn"
-                  style="background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;">Sign out</button>
+          <button type="submit" class="nav-logout-btn">Sign out</button>
         </form>
       {% elif email_enabled or google_oauth_enabled %}
         <a href="/auth/login">Sign in</a>
