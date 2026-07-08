@@ -24,7 +24,7 @@
   {% if theme_file %}
   <link rel="stylesheet" href="/static/{{ theme_file }}?v={{ asset_version }}">
   {% endif %}
-  <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+  <script src="/static/vendor/htmx.min.js?v={{ asset_version }}"></script>
   {% block head_extra %}{% endblock %}
 </head>
 <body>

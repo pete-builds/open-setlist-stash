@@ -60,7 +60,7 @@ Issues = "https://github.com/pete-builds/open-setlist-stash/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-setlist_stash = ["py.typed", "templates/*.html", "static/*", "static/themes/*.css"]
+setlist_stash = ["py.typed", "templates/*.html", "static/*", "static/themes/*.css", "static/vendor/*.js"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
