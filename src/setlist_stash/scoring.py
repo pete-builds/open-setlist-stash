@@ -48,6 +48,19 @@ SONG_POINTS = 2
 ENCORE_BONUS = 5
 
 
+def _norm_slug(slug: str) -> str:
+    """Canonicalize a song slug for cross-source matching.
+
+    The pick menu draws slugs from the phish.in-derived vault, but the
+    published setlist we score against comes from phish.net, and the two
+    slugify punctuation differently (e.g. Mike's Song is ``mike-s-song`` in
+    the vault but ``mikes-song`` in the setlist). Collapsing to alphanumerics
+    makes the membership test source-agnostic while the original slug is kept
+    for display in the breakdown.
+    """
+    return "".join(ch for ch in slug.lower() if ch.isalnum())
+
+
 def score_prediction(
     *,
     pick_song_slugs: list[str],
@@ -68,9 +81,10 @@ def score_prediction(
         ``ScoreBreakdown`` with each pick worth ``SONG_POINTS`` if played,
         plus the encore bonus.
     """
+    setlist_norm = {_norm_slug(s) for s in setlist_slugs}
     picks: list[PickBreakdown] = []
     for slug in pick_song_slugs:
-        played = slug in setlist_slugs
+        played = _norm_slug(slug) in setlist_norm
         points = SONG_POINTS if played else 0
         picks.append({"slug": slug, "played": played, "points": points})
 
@@ -93,6 +107,7 @@ def _slot_breakdown_multi(
     if pick is None:
         actual_repr = ",".join(actuals) if actuals else None
         return {"pick": None, "actual": actual_repr, "bonus": 0}
-    bonus = bonus_amount if pick in actuals else 0
+    actuals_norm = {_norm_slug(a) for a in actuals}
+    bonus = bonus_amount if _norm_slug(pick) in actuals_norm else 0
     actual_repr = ",".join(actuals) if actuals else None
     return {"pick": pick, "actual": actual_repr, "bonus": bonus}

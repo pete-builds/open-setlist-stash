@@ -144,3 +144,48 @@ def test_score_prediction_no_setlist_for_picks_means_zero() -> None:
     )
     assert all(p["points"] == 0 for p in breakdown["picks"])
     assert breakdown["total"] == 0
+
+
+def test_score_prediction_matches_across_slug_punctuation() -> None:
+    """Regression (2026-07-07 Kohl Center): the pick menu draws slugs from the
+    phish.in-derived vault ("mike-s-song") but the setlist is scored against
+    phish.net ("mikes-song"). Exact matching scored a played song as a miss.
+    Normalization must let the two forms match."""
+    breakdown = score_prediction(
+        pick_song_slugs=["character-zero", "mike-s-song", "suzy-greenberg"],
+        encore_slug=None,
+        actual_encore_slugs=[],
+        setlist_slugs={"character-zero", "mikes-song", "weekapaug-groove"},
+    )
+    played = {p["slug"]: p["played"] for p in breakdown["picks"]}
+    assert played["mike-s-song"] is True
+    assert played["character-zero"] is True
+    assert played["suzy-greenberg"] is False
+    # Two played picks, no encore call.
+    assert breakdown["total"] == 2 * SONG_POINTS
+
+
+def test_score_prediction_preserves_original_pick_slug_for_display() -> None:
+    """Normalization is only for the match; the breakdown must echo the user's
+    original slug so the UI still renders the right title."""
+    breakdown = score_prediction(
+        pick_song_slugs=["mike-s-song"],
+        encore_slug=None,
+        actual_encore_slugs=[],
+        setlist_slugs={"mikes-song"},
+    )
+    assert breakdown["picks"][0]["slug"] == "mike-s-song"
+    assert breakdown["picks"][0]["played"] is True
+
+
+def test_score_prediction_encore_matches_across_slug_punctuation() -> None:
+    """The encore bonus must survive the same cross-source slug divergence."""
+    breakdown = score_prediction(
+        pick_song_slugs=["mike-s-song"],
+        encore_slug="mike-s-song",
+        actual_encore_slugs=["mikes-song"],
+        setlist_slugs={"mikes-song"},
+    )
+    assert breakdown["encore"]["bonus"] == ENCORE_BONUS
+    # played pick (2) + encore bonus (5).
+    assert breakdown["total"] == SONG_POINTS + ENCORE_BONUS
