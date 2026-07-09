@@ -1176,22 +1176,27 @@ def build_app(
                             venue_by_date[d] = str(name)
         except McpPhishError:
             logger.warning("mcp-phish unreachable on /shows; bare dates only")
-        shows: list[dict[str, Any]] = []
+        # Split into upcoming vs past against "today" in the display timezone.
+        # Rows arrive newest-first (query ORDER BY show_date DESC), so both
+        # lists keep the newest show at the top with no extra sorting.
+        today = datetime.now(tz=ZoneInfo(cfg.display_tz)).date()
+        upcoming: list[dict[str, Any]] = []
+        past: list[dict[str, Any]] = []
         for r in rows:
             iso = r["show_date"].isoformat()
-            shows.append(
-                {
-                    "show_date": r["show_date"],
-                    "venue": venue_by_date.get(iso),
-                    "entrants": int(r["entrants"]),
-                    "resolved": r["resolved_at"] is not None,
-                }
-            )
+            entry = {
+                "show_date": r["show_date"],
+                "venue": venue_by_date.get(iso),
+                "entrants": int(r["entrants"]),
+                "resolved": r["resolved_at"] is not None,
+            }
+            (past if r["show_date"] < today else upcoming).append(entry)
         return _render(
             request,
             "shows.html",
             current_user=viewer,
-            shows=shows,
+            upcoming=upcoming,
+            past=past,
         )
 
     @app.get("/stats", response_class=HTMLResponse)

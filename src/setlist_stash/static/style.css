@@ -199,6 +199,11 @@ h2 {
   color: var(--text);
 }
 h2::before { content: none; }
+hr.section-divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0 0.5rem;
+}
 h3 {
   font-size: 1.1rem;
   margin: 1.2rem 0 0.5rem;
