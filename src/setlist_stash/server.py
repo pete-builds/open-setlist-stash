@@ -205,6 +205,28 @@ def _gap_label(gap: Any) -> str:
     return f"{n} show gap"
 
 
+def _humanize_countdown(seconds: int) -> str:
+    """Human-readable "time until lock" as hours and minutes.
+
+    - under 1 hour  -> ``43m``
+    - 1h to <24h    -> ``5h 12m`` (99595s -> ``27h 40m`` becomes ``1d 3h 40m``)
+    - 24h or more   -> ``1d 3h 40m`` (days prepended, then hours + minutes)
+    - zero/negative -> ``0m`` (callers should guard the locked state upstream)
+
+    Seconds are intentionally dropped: this is a static, server-rendered label
+    (the live ticking countdown on the predict page is a separate JS widget).
+    """
+    secs = max(int(seconds), 0)
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
 def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
     # Render in the viewer-facing display tz (Eastern by default), not the
     # anchor tz the lock was computed in. strftime("%Z") on a ZoneInfo zone is
@@ -219,6 +241,8 @@ def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
         # the predict-page countdown and post-lock panels.
         "lock_at_iso": lock.lock_at.isoformat(),
         "seconds_until_lock": max(lock.seconds_until_lock, 0),
+        # Human-readable "Xh Ym from now" for static server-rendered labels.
+        "countdown_human": _humanize_countdown(lock.seconds_until_lock),
     }
 
 
@@ -278,6 +302,8 @@ def build_app(
     templates.env.globals["asset_version"] = _compute_asset_version(cfg.theme_file)
     templates.env.globals["footer_credit"] = cfg.footer_credit
     templates.env.globals["footer_credit_url"] = cfg.footer_credit_url
+    templates.env.globals["data_source_name"] = cfg.data_source_name
+    templates.env.globals["data_source_url"] = cfg.data_source_url
     # GA4 measurement ID. Empty (default) renders no analytics tag at all, so
     # the OSS image / third-party self-host stay clean. Set per deployment via
     # the ANALYTICS_ID env var; base.html guards the gtag snippet on it.
@@ -783,6 +809,11 @@ def build_app(
             game=game,
             game_invite_url=game_invite_url,
             game_members=game_members,
+            # Lock state so the confirmation page can offer a "Modify your
+            # picks" affordance while the lock is still open (gated on the same
+            # lock check the upsert/DB-trigger enforce). lock was just read
+            # above and passed the open-lock gate to reach this success path.
+            lock=_format_lock(lock, cfg),
         )
 
     async def _re_render_predict(
@@ -1177,8 +1208,10 @@ def build_app(
         except McpPhishError:
             logger.warning("mcp-phish unreachable on /shows; bare dates only")
         # Split into upcoming vs past against "today" in the display timezone.
-        # Rows arrive newest-first (query ORDER BY show_date DESC), so both
-        # lists keep the newest show at the top with no extra sorting.
+        # Rows arrive newest-first (query ORDER BY show_date DESC). Past keeps
+        # that order (most-recent past at the top). Upcoming gets reversed to
+        # ascending so the SOONEST future show sits at the top and further-out
+        # shows descend down the list.
         today = datetime.now(tz=ZoneInfo(cfg.display_tz)).date()
         upcoming: list[dict[str, Any]] = []
         past: list[dict[str, Any]] = []
@@ -1191,6 +1224,8 @@ def build_app(
                 "resolved": r["resolved_at"] is not None,
             }
             (past if r["show_date"] < today else upcoming).append(entry)
+        # DESC append order gives newest-first; reverse upcoming to soonest-first.
+        upcoming.reverse()
         return _render(
             request,
             "shows.html",

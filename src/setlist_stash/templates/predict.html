@@ -9,7 +9,7 @@
   {% else %}
     <p class="lock">
       Locks at <strong>{{ lock.lock_at_display }}</strong>
-      (<span id="lock-countdown" data-lock-at="{{ lock.lock_at_iso }}">{{ lock.seconds_until_lock }}s</span> from now).
+      (<span id="lock-countdown" data-lock-at="{{ lock.lock_at_iso }}">{{ lock.countdown_human }}</span> from now).
     </p>
     <p>
       {% if enable_games %}

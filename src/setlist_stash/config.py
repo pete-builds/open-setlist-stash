@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     # Optional URL the footer credit links to. Only used when footer_credit is
     # set; if empty the credit renders as plain text.
     footer_credit_url: str = Field(default="")
+    # Optional data-source attribution shown in the footer (e.g. "Phish.net").
+    # Deployment-level override: the phish.net API terms require crediting them
+    # as the setlist data source, but the engine is band-agnostic (an Umphreys
+    # deployment uses a different source), so this is env-driven, not hardcoded.
+    # Empty (default) hides the line so the OSS image / third-party self-host
+    # stays clean. Set via DATA_SOURCE_NAME + DATA_SOURCE_URL per deployment.
+    data_source_name: str = Field(default="")
+    # URL the data-source credit links to. Only used when data_source_name is
+    # set; if empty the credit renders as plain text.
+    data_source_url: str = Field(default="")
     # Google Analytics 4 measurement ID (e.g. "G-XXXXXXXXXX"). Deployment-level
     # override: when set, every page renders the gtag.js snippet; when empty
     # (the default) NO analytics tag renders at all, so the OSS image and any

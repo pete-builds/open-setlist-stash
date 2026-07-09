@@ -79,6 +79,13 @@
         <a href="/about">About</a>
         {% if has_mcp %}<a href="/connect">Connect (MCP)</a>{% endif %}
         {% if has_blog %}<a href="/blog">Blog</a>{% endif %}
+        {% if data_source_name %}
+          {% if data_source_url %}
+            <a href="{{ data_source_url }}" target="_blank" rel="noopener">Data provided by {{ data_source_name }}</a>
+          {% else %}
+            <a>Data provided by {{ data_source_name }}</a>
+          {% endif %}
+        {% endif %}
       </div>
       <div class="footer-col">
         <h4>Project</h4>

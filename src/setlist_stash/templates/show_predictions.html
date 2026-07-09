@@ -12,7 +12,7 @@
       </p>
       {% if lock %}
         <p class="muted">Lock: <strong>{{ lock.lock_at_display }}</strong>
-          ({{ lock.seconds_until_lock }}s from now).</p>
+          ({{ lock.countdown_human }} from now).</p>
       {% endif %}
       {% if entrant_count %}
         <p class="muted">🎸 <strong>{{ entrant_count }}</strong> player{% if entrant_count != 1 %}s{% endif %} in so far.</p>
