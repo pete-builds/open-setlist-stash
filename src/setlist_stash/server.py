@@ -534,23 +534,29 @@ def build_app(
             async with McpPhishClient(
                 cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
             ) as mcp:
-                rows = await mcp.recent_shows(limit=20)
-            for row in rows:
-                if str(row.get("date")) == show_date.isoformat():
-                    raw_id = row.get("show_id")
-                    show_id = str(raw_id) if raw_id else None
-                    venue_name = row.get("venue_name") or None
-                    location = row.get("location") or None
-                    tour_name = row.get("tour_name") or None
-                    break
+                # Targeted per-date lookup so ANY tour date resolves its venue,
+                # regardless of how far the vault reaches into the future. The
+                # old recent_shows(limit=N) scan is date-DESC windowed and misses
+                # the earliest tour dates once far-future shows exist upstream.
+                row = await mcp.get_show(show_date.isoformat())
+            raw_id = row.get("show_id")
+            show_id = str(raw_id) if raw_id else None
+            venue = row.get("venue") or {}
+            venue_name = (venue.get("name") if isinstance(venue, dict) else None) or None
+            location = (
+                venue.get("location") if isinstance(venue, dict) else None
+            ) or None
+            tour_name = row.get("tour_name") or None
         except McpPhishError:
+            # McpPhishNotFound (no show that date) and unavailability both land
+            # here; venue/location stay None and the page degrades gracefully.
             logger.warning(
-                "mcp-phish unreachable for show lookup",
+                "mcp-phish show lookup missed",
                 extra={"show_date": str(show_date)},
             )
 
-        # Operator-set target show: prefer its venue/location. An upcoming show
-        # can sit outside the recent_shows window, so the scan above may miss it.
+        # Operator-set target show: prefer its venue/location. Kept as a
+        # belt-and-suspenders override for a manually pinned show.
         if cfg.admin_show_date and show_date == cfg.admin_show_date:
             venue_name = cfg.admin_show_venue or venue_name
             location = cfg.admin_show_location or location
@@ -1151,19 +1157,23 @@ def build_app(
                  ORDER BY pl.show_date DESC
                 """
             )
-        # Best-effort venue lookup, keyed by ISO date. One mcp call; degrade to
-        # bare dates if it's unreachable so the archive always renders.
+        # Best-effort venue lookup, keyed by ISO date. Query each year present
+        # in the archive via search_shows (covers played + announced-future
+        # shows for the whole tour), instead of a date-DESC recent_shows window
+        # that misses the earliest tour dates once far-future shows exist.
+        # Degrade to bare dates if upstream is down so the archive always renders.
         venue_by_date: dict[str, str] = {}
+        years = sorted({r["show_date"].year for r in rows})
         try:
             async with McpPhishClient(
                 cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
             ) as mcp:
-                recent = await mcp.recent_shows(limit=50)
-            for row in recent:
-                d = str(row.get("date") or "")
-                name = row.get("venue_name") or row.get("location") or ""
-                if d and name:
-                    venue_by_date[d] = str(name)
+                for yr in years:
+                    for row in await mcp.search_shows(year=yr, limit=120):
+                        d = str(row.get("date") or "")
+                        name = row.get("venue_name") or row.get("location") or ""
+                        if d and name:
+                            venue_by_date[d] = str(name)
         except McpPhishError:
             logger.warning("mcp-phish unreachable on /shows; bare dates only")
         shows: list[dict[str, Any]] = []
