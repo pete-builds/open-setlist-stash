@@ -18,7 +18,7 @@
         <p class="muted">🎸 <strong>{{ entrant_count }}</strong> player{% if entrant_count != 1 %}s{% endif %} in so far.</p>
       {% endif %}
       <p>
-        <a class="btn" href="/predict/{{ show_date }}">Predict form</a>
+        <a class="btn" href="/predict/{{ show_date }}">Make Your Picks</a>
         <button type="button" class="btn" id="share-btn"
                 data-share-url="/predict/{{ show_date }}"
                 data-share-title="Make your picks: {{ show_date }}"
@@ -108,7 +108,7 @@
     {% endif %}
 
     <p class="muted" style="margin-top:1rem;">
-      <a href="/predict/{{ show_date }}">Predict form</a> &middot;
+      <a href="/predict/{{ show_date }}">Make Your Picks</a> &middot;
       <a href="/show/{{ show_date }}/assist">Post-lock assist</a>
     </p>
   {% endif %}
