@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Games/Entertainment",
 ]
 dependencies = [
-    "fastapi==0.139.0",
+    "fastapi==0.139.2",
     "uvicorn[standard]==0.51.0",
     "jinja2==3.1.6",
     "httpx==0.28.1",
@@ -41,8 +41,8 @@ dev = [
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "respx==0.23.1",
-    "ruff==0.15.21",
-    "mypy==2.2.0",
+    "ruff==0.15.22",
+    "mypy==2.3.0",
 ]
 
 [project.scripts]
