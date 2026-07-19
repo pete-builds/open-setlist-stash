@@ -10,3 +10,4 @@ itsdangerous==2.2.0
 python-dotenv==1.2.2
 aiosmtplib==5.1.2
 markdown==3.10.2
+authlib==1.7.2

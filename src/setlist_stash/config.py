@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     # Optional URL the footer credit links to. Only used when footer_credit is
     # set; if empty the credit renders as plain text.
     footer_credit_url: str = Field(default="")
+    # Optional data-source attribution shown in the footer (e.g. "Phish.net").
+    # Deployment-level override: the phish.net API terms require crediting them
+    # as the setlist data source, but the engine is band-agnostic (an Umphreys
+    # deployment uses a different source), so this is env-driven, not hardcoded.
+    # Empty (default) hides the line so the OSS image / third-party self-host
+    # stays clean. Set via DATA_SOURCE_NAME + DATA_SOURCE_URL per deployment.
+    data_source_name: str = Field(default="")
+    # URL the data-source credit links to. Only used when data_source_name is
+    # set; if empty the credit renders as plain text.
+    data_source_url: str = Field(default="")
     # Google Analytics 4 measurement ID (e.g. "G-XXXXXXXXXX"). Deployment-level
     # override: when set, every page renders the gtag.js snippet; when empty
     # (the default) NO analytics tag renders at all, so the OSS image and any
@@ -163,6 +173,21 @@ class Settings(BaseSettings):
 
     # --- Session / handle ---
     session_secret: SecretStr = Field(default=SecretStr("dev-only-do-not-use-in-prod"))
+    # Send the ``Secure`` flag on session/flash cookies. False (the default)
+    # keeps LAN/Tailscale-over-HTTP dev working; set COOKIE_SECURE=true on any
+    # HTTPS deployment (e.g. tweezerpicks.com behind Cloudflare) so the cookies
+    # are only ever sent over TLS.
+    cookie_secure: bool = Field(default=False)
+
+    # --- Google SSO (Phase 1) ---
+    # OAuth 2.0 / OpenID Connect "Web application" client credentials. Both
+    # empty (the default) hides "Sign in with Google" entirely, so the OSS
+    # image, the Wappy sibling deployment, and any third-party self-host stay
+    # unaffected until they provision their own client (same empty-string-means-
+    # disabled gating idiom used for MCP_PUBLIC_URL etc). The redirect URI is
+    # derived from BASE_URL as ``{base_url}/auth/google/callback``.
+    google_client_id: str = Field(default="")
+    google_client_secret: SecretStr = Field(default=SecretStr(""))
 
     # --- Magic-link email (Phase 4b) ---
     # Provider selector. ``disabled`` (default) hides the email UI behind a
@@ -206,6 +231,23 @@ class Settings(BaseSettings):
     admin_show_date: date | None = Field(default=None)
     admin_show_venue: str | None = Field(default=None)
     admin_show_location: str | None = Field(default=None)
+
+    @property
+    def google_oauth_enabled(self) -> bool:
+        """True only when a Google OAuth client is fully configured.
+
+        Mirrors the empty-string-means-disabled gate used elsewhere: when
+        either the id or the secret is unset, the "Sign in with Google" entry
+        points disappear and the /auth/google/* routes redirect home.
+        """
+        return bool(
+            self.google_client_id and self.google_client_secret.get_secret_value()
+        )
+
+    @property
+    def google_redirect_uri(self) -> str:
+        """The OAuth redirect URI, derived from ``base_url``."""
+        return f"{self.base_url.rstrip('/')}/auth/google/callback"
 
     @property
     def pg_dsn(self) -> str:

@@ -274,13 +274,21 @@ async def select_form_show(
 ) -> ShowTarget | None:
     """Pick the show that the predict form should target.
 
-    See module docstring for the precedence rules.
+    Auto-advances through the tour: picks the NEAREST upcoming show (minimum
+    date on/after today), so the "Make Your Picks" call-to-action moves to the
+    next show on its own after each one plays. ``ADMIN_SHOW_DATE`` is honored
+    only as an override while it is still in the future; once it passes we stop
+    relying on it and resume auto-selection.
+
+    ``recent_shows`` is date-DESC and windowed, so it can't be trusted to
+    surface the *nearest* future date once far-future shows (e.g. next-year
+    runs) exist upstream. We instead pull each candidate year via
+    ``search_shows`` and take the minimum future date.
     """
-    if settings.admin_show_date:
-        # Admin override: trust the operator. We don't validate against
-        # mcp-phish here because future shows aren't in the corpus until
-        # they're played. The form will still work — just no venue label
-        # until phish.net publishes the show row.
+    today = date.today()
+
+    # Operator override: only while the pinned date is still upcoming.
+    if settings.admin_show_date and settings.admin_show_date >= today:
         return ShowTarget(
             show_date=settings.admin_show_date,
             show_id=None,
@@ -289,23 +297,29 @@ async def select_form_show(
             tour_name=None,
         )
 
-    today = date.today()
+    # Cover a tour that straddles a year boundary (summer run into next-year
+    # Mexico, etc.) so we never miss the true nearest date.
+    candidates: list[tuple[date, dict[str, Any]]] = []
     try:
-        rows = await mcp.recent_shows(limit=20)
+        for yr in (today.year, today.year + 1):
+            for row in await mcp.search_shows(year=yr, limit=200):
+                try:
+                    d = date.fromisoformat(str(row["date"]))
+                except (KeyError, ValueError):
+                    continue
+                if d >= today:
+                    candidates.append((d, row))
     except Exception:
-        logger.exception("recent_shows lookup failed")
+        logger.exception("search_shows lookup failed")
         return None
-    for row in rows:
-        try:
-            d = date.fromisoformat(str(row["date"]))
-        except (KeyError, ValueError):
-            continue
-        if d > today:
-            return ShowTarget(
-                show_date=d,
-                show_id=str(row.get("show_id")) if row.get("show_id") else None,
-                venue_name=row.get("venue_name"),
-                location=row.get("location"),
-                tour_name=row.get("tour_name"),
-            )
-    return None
+
+    if not candidates:
+        return None
+    d, row = min(candidates, key=lambda pair: pair[0])
+    return ShowTarget(
+        show_date=d,
+        show_id=str(row.get("show_id")) if row.get("show_id") else None,
+        venue_name=row.get("venue_name"),
+        location=row.get("location"),
+        tour_name=row.get("tour_name"),
+    )

@@ -26,10 +26,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import uvicorn
+from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import FastAPI, Form, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from setlist_stash import __version__
 from setlist_stash.auth import (
@@ -40,6 +42,7 @@ from setlist_stash.auth import (
     create_user,
     current_user,
     sign_user_id,
+    update_handle,
     validate_handle,
 )
 from setlist_stash.auth_email import (
@@ -49,6 +52,10 @@ from setlist_stash.auth_email import (
     request_email_link,
     request_login_link,
     verify_token,
+)
+from setlist_stash.auth_google import (
+    GoogleLinkConflict,
+    resolve_google_identity,
 )
 from setlist_stash.blog import get_post, load_posts
 from setlist_stash.config import Settings, get_settings
@@ -198,6 +205,28 @@ def _gap_label(gap: Any) -> str:
     return f"{n} show gap"
 
 
+def _humanize_countdown(seconds: int) -> str:
+    """Human-readable "time until lock" as hours and minutes.
+
+    - under 1 hour  -> ``43m``
+    - 1h to <24h    -> ``5h 12m`` (99595s -> ``27h 40m`` becomes ``1d 3h 40m``)
+    - 24h or more   -> ``1d 3h 40m`` (days prepended, then hours + minutes)
+    - zero/negative -> ``0m`` (callers should guard the locked state upstream)
+
+    Seconds are intentionally dropped: this is a static, server-rendered label
+    (the live ticking countdown on the predict page is a separate JS widget).
+    """
+    secs = max(int(seconds), 0)
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
 def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
     # Render in the viewer-facing display tz (Eastern by default), not the
     # anchor tz the lock was computed in. strftime("%Z") on a ZoneInfo zone is
@@ -212,6 +241,8 @@ def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
         # the predict-page countdown and post-lock panels.
         "lock_at_iso": lock.lock_at.isoformat(),
         "seconds_until_lock": max(lock.seconds_until_lock, 0),
+        # Human-readable "Xh Ym from now" for static server-rendered labels.
+        "countdown_human": _humanize_countdown(lock.seconds_until_lock),
     }
 
 
@@ -271,6 +302,8 @@ def build_app(
     templates.env.globals["asset_version"] = _compute_asset_version(cfg.theme_file)
     templates.env.globals["footer_credit"] = cfg.footer_credit
     templates.env.globals["footer_credit_url"] = cfg.footer_credit_url
+    templates.env.globals["data_source_name"] = cfg.data_source_name
+    templates.env.globals["data_source_url"] = cfg.data_source_url
     # GA4 measurement ID. Empty (default) renders no analytics tag at all, so
     # the OSS image / third-party self-host stay clean. Set per deployment via
     # the ANALYTICS_ID env var; base.html guards the gtag snippet on it.
@@ -283,6 +316,12 @@ def build_app(
     # provider is disabled (default), so the email entry points disappear for
     # any deployment without email configured.
     templates.env.globals["email_enabled"] = provider.name != "disabled"
+    # Whether the "Sign in with Google" entry points render at all. True only
+    # when a Google OAuth client is fully configured for this deployment; empty
+    # (the default) leaves every Google button off and the /auth/google/* routes
+    # redirect home — so the OSS image, the Wappy sibling, and any third-party
+    # self-host stay unaffected until they opt in (Phase 1 Google SSO).
+    templates.env.globals["google_oauth_enabled"] = cfg.google_oauth_enabled
     # Whether to render the nav "Blog" link. True only when the bind-mounted
     # BLOG_DIR holds at least one parseable post. Empty/missing dir (the Phish
     # demo, third-party self-host) leaves the link off entirely. Evaluated at
@@ -315,6 +354,23 @@ def build_app(
         )
     mcp_rate_limiter = FixedWindowRateLimiter(cfg.mcp_rate_limit_per_minute)
 
+    # Google SSO (Phase 1): register the OIDC client only when configured.
+    # Authlib pulls Google's discovery document + JWKS lazily on first use and
+    # verifies the id_token signature/claims for us. When disabled (default),
+    # ``oauth`` stays None and the /auth/google/* routes redirect home.
+    oauth: OAuth | None = None
+    if cfg.google_oauth_enabled:
+        oauth = OAuth()
+        oauth.register(
+            name="google",
+            client_id=cfg.google_client_id,
+            client_secret=cfg.google_client_secret.get_secret_value(),
+            server_metadata_url=(
+                "https://accounts.google.com/.well-known/openid-configuration"
+            ),
+            client_kwargs={"scope": "openid email profile"},
+        )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # Startup: pool + migrations.
@@ -334,6 +390,20 @@ def build_app(
         version=__version__,
         description="Open-source setlist prediction game.",
         lifespan=lifespan,
+    )
+
+    # Starlette session cookie used ONLY to carry the OAuth ``state``/``nonce``
+    # across the Google redirect (Phase 1 Google SSO). It is short-lived and
+    # completely separate from the primary ``phishgame_session`` signed-cookie
+    # identity, which is untouched. Keyed with the same session_secret so no new
+    # secret is needed; ``https_only`` follows COOKIE_SECURE.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=cfg.session_secret.get_secret_value(),
+        session_cookie="phishgame_oauth",
+        max_age=600,  # 10 min: only needs to survive the round-trip to Google
+        same_site="lax",
+        https_only=cfg.cookie_secure,
     )
 
     # Per-IP rate limit, scoped to the public /mcp proxy ONLY. The game UI,
@@ -381,7 +451,7 @@ def build_app(
             max_age=COOKIE_MAX_AGE_SECONDS,
             httponly=True,
             samesite="lax",
-            secure=False,  # LAN/Tailscale; Phase 6 enables Secure under HTTPS
+            secure=cfg.cookie_secure,  # True on HTTPS deployments (COOKIE_SECURE)
         )
 
     # ----- routes -----------------------------------------------------------
@@ -490,23 +560,29 @@ def build_app(
             async with McpPhishClient(
                 cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
             ) as mcp:
-                rows = await mcp.recent_shows(limit=20)
-            for row in rows:
-                if str(row.get("date")) == show_date.isoformat():
-                    raw_id = row.get("show_id")
-                    show_id = str(raw_id) if raw_id else None
-                    venue_name = row.get("venue_name") or None
-                    location = row.get("location") or None
-                    tour_name = row.get("tour_name") or None
-                    break
+                # Targeted per-date lookup so ANY tour date resolves its venue,
+                # regardless of how far the vault reaches into the future. The
+                # old recent_shows(limit=N) scan is date-DESC windowed and misses
+                # the earliest tour dates once far-future shows exist upstream.
+                row = await mcp.get_show(show_date.isoformat())
+            raw_id = row.get("show_id")
+            show_id = str(raw_id) if raw_id else None
+            venue = row.get("venue") or {}
+            venue_name = (venue.get("name") if isinstance(venue, dict) else None) or None
+            location = (
+                venue.get("location") if isinstance(venue, dict) else None
+            ) or None
+            tour_name = row.get("tour_name") or None
         except McpPhishError:
+            # McpPhishNotFound (no show that date) and unavailability both land
+            # here; venue/location stay None and the page degrades gracefully.
             logger.warning(
-                "mcp-phish unreachable for show lookup",
+                "mcp-phish show lookup missed",
                 extra={"show_date": str(show_date)},
             )
 
-        # Operator-set target show: prefer its venue/location. An upcoming show
-        # can sit outside the recent_shows window, so the scan above may miss it.
+        # Operator-set target show: prefer its venue/location. Kept as a
+        # belt-and-suspenders override for a manually pinned show.
         if cfg.admin_show_date and show_date == cfg.admin_show_date:
             venue_name = cfg.admin_show_venue or venue_name
             location = cfg.admin_show_location or location
@@ -733,6 +809,11 @@ def build_app(
             game=game,
             game_invite_url=game_invite_url,
             game_members=game_members,
+            # Lock state so the confirmation page can offer a "Modify your
+            # picks" affordance while the lock is still open (gated on the same
+            # lock check the upsert/DB-trigger enforce). lock was just read
+            # above and passed the open-lock gate to reach this success path.
+            lock=_format_lock(lock, cfg),
         )
 
     async def _re_render_predict(
@@ -1107,37 +1188,50 @@ def build_app(
                  ORDER BY pl.show_date DESC
                 """
             )
-        # Best-effort venue lookup, keyed by ISO date. One mcp call; degrade to
-        # bare dates if it's unreachable so the archive always renders.
+        # Best-effort venue lookup, keyed by ISO date. Query each year present
+        # in the archive via search_shows (covers played + announced-future
+        # shows for the whole tour), instead of a date-DESC recent_shows window
+        # that misses the earliest tour dates once far-future shows exist.
+        # Degrade to bare dates if upstream is down so the archive always renders.
         venue_by_date: dict[str, str] = {}
+        years = sorted({r["show_date"].year for r in rows})
         try:
             async with McpPhishClient(
                 cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
             ) as mcp:
-                recent = await mcp.recent_shows(limit=50)
-            for row in recent:
-                d = str(row.get("date") or "")
-                name = row.get("venue_name") or row.get("location") or ""
-                if d and name:
-                    venue_by_date[d] = str(name)
+                for yr in years:
+                    for row in await mcp.search_shows(year=yr, limit=120):
+                        d = str(row.get("date") or "")
+                        name = row.get("venue_name") or row.get("location") or ""
+                        if d and name:
+                            venue_by_date[d] = str(name)
         except McpPhishError:
             logger.warning("mcp-phish unreachable on /shows; bare dates only")
-        shows: list[dict[str, Any]] = []
+        # Split into upcoming vs past against "today" in the display timezone.
+        # Rows arrive newest-first (query ORDER BY show_date DESC). Past keeps
+        # that order (most-recent past at the top). Upcoming gets reversed to
+        # ascending so the SOONEST future show sits at the top and further-out
+        # shows descend down the list.
+        today = datetime.now(tz=ZoneInfo(cfg.display_tz)).date()
+        upcoming: list[dict[str, Any]] = []
+        past: list[dict[str, Any]] = []
         for r in rows:
             iso = r["show_date"].isoformat()
-            shows.append(
-                {
-                    "show_date": r["show_date"],
-                    "venue": venue_by_date.get(iso),
-                    "entrants": int(r["entrants"]),
-                    "resolved": r["resolved_at"] is not None,
-                }
-            )
+            entry = {
+                "show_date": r["show_date"],
+                "venue": venue_by_date.get(iso),
+                "entrants": int(r["entrants"]),
+                "resolved": r["resolved_at"] is not None,
+            }
+            (past if r["show_date"] < today else upcoming).append(entry)
+        # DESC append order gives newest-first; reverse upcoming to soonest-first.
+        upcoming.reverse()
         return _render(
             request,
             "shows.html",
             current_user=viewer,
-            shows=shows,
+            upcoming=upcoming,
+            past=past,
         )
 
     @app.get("/stats", response_class=HTMLResponse)
@@ -1607,7 +1701,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return redirect
 
@@ -1804,7 +1898,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return redirect
 
@@ -1850,7 +1944,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return redirect
 
@@ -1886,6 +1980,125 @@ def build_app(
         return RedirectResponse(
             "/leagues", status_code=status.HTTP_303_SEE_OTHER
         )
+
+    # ----- Phase 1: Google SSO + logout -------------------------------------
+
+    def _oauth_error_page(
+        request: Request,
+        *,
+        message: str,
+        current: Any,
+        code: int,
+    ) -> Response:
+        """Render the shared auth-error template for a failed Google sign-in."""
+        resp = _render(
+            request,
+            "auth_verify_error.html",
+            current_user=current,
+            message=message,
+            ttl_hours=cfg.magic_link_ttl_hours,
+            signed_in=current is not None,
+        )
+        resp.status_code = code
+        return resp
+
+    @app.get("/auth/google/start")
+    async def google_start(request: Request) -> Response:
+        """Kick off the Google OAuth redirect (scope: openid email profile).
+
+        Redirects home when Google SSO is not configured for this deployment.
+        """
+        if oauth is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        # Authlib stashes state + nonce in the (session-middleware) cookie and
+        # returns the redirect to Google's consent screen.
+        return await oauth.google.authorize_redirect(  # type: ignore[no-any-return]
+            request, cfg.google_redirect_uri
+        )
+
+    @app.get("/auth/google/callback")
+    async def google_callback(request: Request) -> Response:
+        """Handle Google's redirect back: verify the id_token, resolve the
+        account, set the session cookie, and land on /account.
+        """
+        if oauth is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        current = await _resolve_user(request)
+        try:
+            # Authlib verifies the id_token signature + claims (aud/iss/exp/
+            # nonce) against Google's JWKS and returns the parsed OIDC claims
+            # under token["userinfo"].
+            token = await oauth.google.authorize_access_token(request)
+        except OAuthError as exc:
+            logger.warning("google oauth error", extra={"err": str(exc)})
+            return _oauth_error_page(
+                request,
+                message="Google sign-in failed or was cancelled. Please try again.",
+                current=current,
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        userinfo = token.get("userinfo") or {}
+        google_sub = str(userinfo.get("sub") or "")
+        if not google_sub:
+            return _oauth_error_page(
+                request,
+                message="Google did not return an account id. Please try again.",
+                current=current,
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        email = userinfo.get("email")
+        email_verified = bool(userinfo.get("email_verified"))
+        pool = get_pool()
+        try:
+            resolution = await resolve_google_identity(
+                pool,
+                google_sub=google_sub,
+                email=email,
+                email_verified=email_verified,
+                current=current,
+            )
+        except GoogleLinkConflict as exc:
+            return _oauth_error_page(
+                request,
+                message=str(exc),
+                current=current,
+                code=status.HTTP_409_CONFLICT,
+            )
+        # A brand-new Google account gets an auto-generated PROVISIONAL handle.
+        # Sign them in, then send them to the "choose your handle" step with the
+        # suggestion pre-filled and editable — nobody is forced to keep the
+        # placeholder. Existing accounts (link / returning / email-match) keep
+        # their handle and go straight to /account.
+        if resolution.is_new:
+            resp = RedirectResponse(
+                "/account/handle?new=1", status_code=status.HTTP_303_SEE_OTHER
+            )
+            _set_session_cookie(resp, resolution.user_id)
+            return resp
+        resp = RedirectResponse(
+            "/account", status_code=status.HTTP_303_SEE_OTHER
+        )
+        _set_session_cookie(resp, resolution.user_id)
+        resp.set_cookie(
+            "phishgame_flash",
+            "Signed in with Google.",
+            max_age=30,
+            httponly=True,
+            samesite="lax",
+            secure=cfg.cookie_secure,
+        )
+        return resp
+
+    @app.post("/logout")
+    async def logout(request: Request) -> Response:
+        """Clear the session identity cookie and return home. Idempotent."""
+        resp: Response = RedirectResponse(
+            "/", status_code=status.HTTP_303_SEE_OTHER
+        )
+        resp.delete_cookie(
+            COOKIE_NAME, samesite="lax", secure=cfg.cookie_secure
+        )
+        return resp
 
     # ----- Phase 4b: magic-link email auth ----------------------------------
 
@@ -2093,7 +2306,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return resp
 
@@ -2106,18 +2319,79 @@ def build_app(
         pool = get_pool()
         status_data = await get_email_status(pool, user.id)
         memberships = await list_user_leagues(pool, user.id)
+        async with pool.acquire() as conn:
+            google_sub = await conn.fetchval(
+                "SELECT google_sub FROM users WHERE id = $1", user.id
+            )
         flash = request.cookies.get("phishgame_flash")
         resp = _render(
             request,
             "account.html",
             current_user=user,
             status=status_data,
+            google_linked=google_sub is not None,
             flash=flash,
             leagues=memberships,
         )
         if flash:
             resp.delete_cookie("phishgame_flash")
         return resp
+
+    @app.get("/account/handle", response_class=HTMLResponse)
+    async def account_handle_form(
+        request: Request, new: int = Query(0)
+    ) -> Response:
+        """Form to choose / change your handle. Sign-in required.
+
+        ``?new=1`` (used right after a first-time Google sign-in) shows a
+        welcome prompt with the auto-suggested handle pre-filled and editable,
+        so nobody is stuck with the placeholder.
+        """
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        return _render(
+            request,
+            "account_handle.html",
+            current_user=user,
+            is_new=bool(new),
+            handle_help=HANDLE_HELP,
+        )
+
+    @app.post("/account/handle")
+    async def account_handle_submit(
+        request: Request, handle: str = Form(...)
+    ) -> Response:
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        pool = get_pool()
+        try:
+            new_handle = await update_handle(pool, user.id, handle)
+        except HandleError as exc:
+            resp = _render(
+                request,
+                "account_handle.html",
+                current_user=user,
+                is_new=False,
+                handle_help=HANDLE_HELP,
+                error=str(exc),
+                attempted=handle,
+            )
+            resp.status_code = status.HTTP_400_BAD_REQUEST
+            return resp
+        redirect: Response = RedirectResponse(
+            "/account", status_code=status.HTTP_303_SEE_OTHER
+        )
+        redirect.set_cookie(
+            "phishgame_flash",
+            f"Handle updated to {new_handle}.",
+            max_age=30,
+            httponly=True,
+            samesite="lax",
+            secure=cfg.cookie_secure,
+        )
+        return redirect
 
     # ----- blog (deployment-specific content, mounted at BLOG_DIR) ----------
 
