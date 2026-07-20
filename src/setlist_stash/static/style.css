@@ -103,21 +103,6 @@ body {
   color: var(--accent);
   border: 0;
 }
-/* "Sign out" is a POST, so it's a <form><button> in the nav. Make it read like
-   the other nav links (and collapse into the mobile hamburger panel with them). */
-.topbar nav .nav-logout { margin: 0; display: inline; }
-.topbar nav .nav-logout-btn {
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: var(--text-soft);
-  background: none;
-  border: 0;
-  padding: 0.4rem 0;
-  cursor: pointer;
-  transition: color 120ms ease;
-}
-.topbar nav .nav-logout-btn:hover { color: var(--accent); }
 
 /* Hamburger menu button: hidden on desktop, shown at the mobile breakpoint. */
 .nav-toggle {
@@ -199,11 +184,6 @@ h2 {
   color: var(--text);
 }
 h2::before { content: none; }
-hr.section-divider {
-  border: 0;
-  border-top: 1px solid var(--border);
-  margin: 2rem 0 0.5rem;
-}
 h3 {
   font-size: 1.1rem;
   margin: 1.2rem 0 0.5rem;
@@ -664,6 +644,25 @@ table.leaderboard a {
 }
 table.leaderboard a:hover { color: var(--accent); text-decoration: underline; }
 
+/* Picks / Encore cells. Song slugs are long hyphenated tokens
+   (e.g. "down-with-disease"); by default browsers add a soft-wrap
+   opportunity after every hyphen-minus, so on a narrow phone column the
+   picker string shatters into stacked fragments. Render each slug as an
+   intact non-breaking chip so slugs stay whole and wrap only BETWEEN
+   picks, keeping the box readable on mobile. */
+table.leaderboard td.picks { white-space: normal; }
+table.leaderboard td.picks .pick {
+  display: inline-block;
+  white-space: nowrap;
+  background: var(--surface-alt);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  margin: 0.12rem 0.2rem 0.12rem 0;
+  font-size: 0.82em;
+  line-height: 1.4;
+}
+
 .me-tag {
   display: inline-block;
   background: var(--accent);
@@ -886,48 +885,120 @@ table.leaderboard a:hover { color: var(--accent); text-decoration: underline; }
 @media (max-width: 640px) {
   .topbar { flex-wrap: wrap; gap: 0.5rem 1rem; padding: 0.85rem 1.1rem; }
   /* Show the hamburger; collapse the inline nav into a toggled panel. */
-  .nav-toggle { display: inline-flex; }
+  .nav-toggle { display: inline-flex !important; }
   .topbar nav {
     margin-left: 0;
     width: 100%;
+    /* Hidden until .nav-open is toggled by the hamburger JS.
+       !important so a mounted brand theme (lot-poster, wappy-poster, ...)
+       that redeclares `.topbar nav { display: flex }` at equal specificity
+       and loads AFTER this file cannot re-expand the collapsed mobile nav. */
+    display: none !important;
     flex-direction: column;
     align-items: stretch;
     gap: 0;
     margin-top: 0.4rem;
     border-top: 1px solid var(--border-soft);
   }
-  /* Collapsed by default on mobile; the hamburger toggles .nav-open to reveal
-     the full menu (auth items included). The :not(.nav-open) selector raises
-     specificity to (0,0,2,1) on purpose: a deployment THEME is loaded AFTER
-     this file, and a plain `.topbar nav { display: flex }` in that theme would
-     otherwise win on source order and leak the inline desktop nav back onto
-     mobile — exactly the Lot Poster (Tweezer) bug, where the hamburger showed
-     but the links never hid. Higher specificity beats a later same-specificity
-     theme rule, so the collapse holds for any theme. */
-  .topbar nav:not(.nav-open) { display: none; }
-  .topbar nav.nav-open { display: flex; }
-  /* Each direct child is a full-width row. The logout <form> is the row; its
-     <button> just fills it (no second border/padding). */
-  .topbar nav a,
-  .topbar nav .nav-logout {
+  .topbar nav.nav-open { display: flex !important; }
+  .topbar nav a {
     font-size: 0.95rem;
     width: 100%;
     padding: 0.7rem 0.2rem;
     border-bottom: 1px solid var(--border-soft);
   }
-  .topbar nav .nav-logout-btn {
-    width: 100%;
-    padding: 0;
-    text-align: left;
-  }
-  .topbar nav a:last-child,
-  .topbar nav .nav-logout:last-child { border-bottom: 0; }
+  .topbar nav a:last-child { border-bottom: 0; }
   .brand { font-size: 1.05rem; }
   .content { margin: 1.4rem auto 0.5rem; padding: 0 1.1rem; }
   h1 { font-size: 1.6rem; }
   h2 { font-size: 1.2rem; }
   table.leaderboard { font-size: 0.88rem; }
   table.leaderboard th, table.leaderboard td { padding: 0.55rem 0.6rem; }
+}
+
+/* Per-show standings: on phones the 5-column table (rank, handle, score,
+   picks, encore) is wider than the viewport, so long handles + slug chips
+   clip past the right edge behind an unclear horizontal scroll. Reflow each
+   row into a self-contained labeled card so nothing clips. Desktop (>640px)
+   is completely untouched — every rule below lives inside this query. */
+@media (max-width: 640px) {
+  /* No horizontal scroll needed once rows are cards. */
+  .leaderboard-wrap { overflow-x: visible; }
+
+  table.leaderboard,
+  table.leaderboard tbody,
+  table.leaderboard tr,
+  table.leaderboard td {
+    display: block;
+    width: 100%;
+  }
+
+  /* Header row is redundant once every cell is self-labeled; hide it
+     visually but keep it for assistive tech. */
+  table.leaderboard thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Each row becomes a bordered card. */
+  table.leaderboard { border: 0; box-shadow: none; background: none; }
+  table.leaderboard tr {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+    padding: 0.7rem 0.9rem;
+    margin: 0 0 0.75rem;
+  }
+  table.leaderboard tr:last-child { margin-bottom: 0; }
+  table.leaderboard tbody tr:hover td { background: none; }
+
+  /* "You" card accent (replaces the desktop left-border treatment). */
+  table.leaderboard tr.is-me {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+  table.leaderboard tr.is-me td { background: none !important; }
+  table.leaderboard tr.is-me td:first-child {
+    border-left: 0;
+    padding-left: 0;
+  }
+
+  /* Cells stack; each shows its column label via data-label. */
+  table.leaderboard td {
+    border-bottom: 0;
+    padding: 0.18rem 0;
+    text-align: left;
+  }
+  table.leaderboard td.num { text-align: left; }
+  table.leaderboard td::before {
+    content: attr(data-label);
+    display: inline-block;
+    min-width: 4.5rem;
+    margin-right: 0.5rem;
+    font-family: "IBM Plex Sans", sans-serif;
+    font-weight: 600;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-soft);
+    vertical-align: baseline;
+  }
+
+  /* Picks + Encore: label on its own line, chips wrap full card width. */
+  table.leaderboard td.picks { padding-top: 0.35rem; }
+  table.leaderboard td.picks::before {
+    display: block;
+    min-width: 0;
+    margin: 0 0 0.25rem;
+  }
 }
 
 /* ---- rich footer (multi-column) ---- */

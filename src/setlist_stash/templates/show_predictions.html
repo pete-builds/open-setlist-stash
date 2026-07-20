@@ -12,13 +12,13 @@
       </p>
       {% if lock %}
         <p class="muted">Lock: <strong>{{ lock.lock_at_display }}</strong>
-          ({{ lock.countdown_human }} from now).</p>
+          ({{ lock.seconds_until_lock }}s from now).</p>
       {% endif %}
       {% if entrant_count %}
         <p class="muted">🎸 <strong>{{ entrant_count }}</strong> player{% if entrant_count != 1 %}s{% endif %} in so far.</p>
       {% endif %}
       <p>
-        <a class="btn" href="/predict/{{ show_date }}">Make Your Picks</a>
+        <a class="btn" href="/predict/{{ show_date }}">Predict form</a>
         <button type="button" class="btn" id="share-btn"
                 data-share-url="/predict/{{ show_date }}"
                 data-share-title="Make your picks: {{ show_date }}"
@@ -82,13 +82,21 @@
           <tbody>
             {% for r in rows %}
               <tr {% if current_user and current_user.handle == r.handle %}class="is-me"{% endif %}>
-                <td class="num">{{ loop.index }}</td>
-                <td>
+                <td class="num" data-label="#">{{ loop.index }}</td>
+                <td data-label="Handle">
                   <a href="/u/{{ r.handle }}">{{ r.handle }}</a>{% if current_user and current_user.handle == r.handle %} <span class="me-tag">you</span>{% endif %}
                 </td>
-                <td class="num">{{ r.score if r.score is not none else 0 }}</td>
-                <td class="muted">{{ r.pick_song_slugs | join(', ') }}</td>
-                <td class="muted">{{ r.encore_slug or '-' }}</td>
+                <td class="num" data-label="Score">{{ r.score if r.score is not none else 0 }}</td>
+                <td class="muted picks" data-label="Picks">
+                  {%- for slug in r.pick_song_slugs -%}
+                    <span class="pick">{{ slug }}</span>
+                  {%- else -%}
+                    <span class="muted">-</span>
+                  {%- endfor -%}
+                </td>
+                <td class="muted picks" data-label="Encore call">
+                  {%- if r.encore_slug -%}<span class="pick">{{ r.encore_slug }}</span>{%- else -%}-{%- endif -%}
+                </td>
               </tr>
             {% endfor %}
           </tbody>
@@ -108,7 +116,7 @@
     {% endif %}
 
     <p class="muted" style="margin-top:1rem;">
-      <a href="/predict/{{ show_date }}">Make Your Picks</a> &middot;
+      <a href="/predict/{{ show_date }}">Predict form</a> &middot;
       <a href="/show/{{ show_date }}/assist">Post-lock assist</a>
     </p>
   {% endif %}
