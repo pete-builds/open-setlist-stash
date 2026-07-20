@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     # /connect docs copy (e.g. "Umphrey's McGee"). Falls back to a generic
     # phrase when empty.
     mcp_subject: str = Field(default="")
+    # Local MCP-client alias suggested on the /connect docs page (the name used
+    # in ``claude mcp add ... <alias> <url>`` and as the JSON key in the Claude
+    # Desktop example). Deployment-level override; when empty (the default) it
+    # is derived from ``mcp_subject`` via ``mcp_alias_effective`` (first word,
+    # slugified, e.g. "Umphrey's McGee" -> "umphreys", "Phish" -> "phish"), so
+    # each tenant renders its own band automatically with no per-deployment
+    # config. Set MCP_ALIAS explicitly only to override that derivation.
+    mcp_alias: str = Field(default="")
     # Directory the blog engine reads ``*.md`` posts from. Deployment-specific:
     # the content is NOT in the image, it's bind-mounted here per deployment
     # (same pattern as THEME_FILE). With nothing mounted the dir is missing,
@@ -206,6 +214,25 @@ class Settings(BaseSettings):
     admin_show_date: date | None = Field(default=None)
     admin_show_venue: str | None = Field(default=None)
     admin_show_location: str | None = Field(default=None)
+
+    @property
+    def mcp_alias_effective(self) -> str:
+        """Resolve the /connect MCP-client alias for this deployment.
+
+        Explicit ``MCP_ALIAS`` wins. Otherwise derive a slug from the first
+        word of ``mcp_subject`` (e.g. "Umphrey's McGee" -> "umphreys",
+        "Phish" -> "phish"). Falls back to a generic "setlist" when neither is
+        usable, so a deployment that exposes an MCP without a subject still
+        renders a sane, band-neutral alias.
+        """
+        if self.mcp_alias:
+            return self.mcp_alias
+        if self.mcp_subject:
+            first = self.mcp_subject.split()[0] if self.mcp_subject.split() else ""
+            slug = "".join(ch for ch in first.lower() if ch.isalnum())
+            if slug:
+                return slug
+        return "setlist"
 
     @property
     def pg_dsn(self) -> str:
