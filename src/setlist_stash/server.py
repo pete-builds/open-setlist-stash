@@ -342,6 +342,11 @@ def build_app(
     templates.env.globals["has_mcp"] = bool(cfg.mcp_public_url)
     templates.env.globals["mcp_public_url"] = cfg.mcp_public_url
     templates.env.globals["mcp_subject"] = cfg.mcp_subject
+    # Suggested local MCP-client alias on /connect (the name in `claude mcp add`
+    # and the Claude Desktop JSON key). Derived per tenant from mcp_subject when
+    # MCP_ALIAS is unset, so tweezerpicks renders "phish" and wappypicks renders
+    # "umphreys" with no per-deployment config.
+    templates.env.globals["mcp_alias"] = cfg.mcp_alias_effective
 
     # Public MCP reverse proxy (oss-platform-split): only active when an
     # upstream is configured for this deployment. When unset, /mcp is not

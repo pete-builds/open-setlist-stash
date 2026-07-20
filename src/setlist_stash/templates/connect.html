@@ -18,8 +18,8 @@
     <section class="card">
       <h2>Claude Code (CLI)</h2>
       <p>One command adds it to your user config:</p>
-      <div class="code-block"><code>claude mcp add -t http -s user umphreys {{ mcp_public_url }}</code></div>
-      <p class="muted">Then start a session and ask, e.g. "what Umphrey's songs are overdue for a bust-out?"</p>
+      <div class="code-block"><code>claude mcp add -t http -s user {{ mcp_alias }} {{ mcp_public_url }}</code></div>
+      <p class="muted">Then start a session and ask, e.g. "what {{ subject }} songs are overdue for a bust-out?"</p>
     </section>
 
     <section class="card">
@@ -27,7 +27,7 @@
       <p>Add a remote (HTTP) server to your <code>claude_desktop_config.json</code>:</p>
       <div class="code-block"><code>{
   "mcpServers": {
-    "umphreys": {
+    "{{ mcp_alias }}": {
       "type": "http",
       "url": "{{ mcp_public_url }}"
     }
