@@ -2,7 +2,7 @@
 {% block title %}Shows — {{ site_name }}{% endblock %}
 {% macro show_table(rows) %}
   <div class="leaderboard-wrap">
-    <table class="leaderboard">
+    <table class="leaderboard shows-table">
       <thead>
         <tr>
           <th>Show</th>
@@ -14,10 +14,10 @@
       <tbody>
         {% for s in rows %}
           <tr>
-            <td><a href="/show/{{ s.show_date }}/predictions">{{ s.show_date }}</a></td>
-            <td class="muted">{{ s.venue or '-' }}</td>
-            <td class="num">{{ s.entrants }}</td>
-            <td class="muted">{% if s.resolved %}Final{% else %}Open{% endif %}</td>
+            <td class="show-date" data-label="Show"><a href="/show/{{ s.show_date }}/predictions">{{ s.show_date }}</a></td>
+            <td class="muted" data-label="Venue">{{ s.venue or '-' }}</td>
+            <td class="num" data-label="Players">{{ s.entrants or 0 }}</td>
+            <td class="muted" data-label="Status">{% if s.resolved %}Final{% else %}Open{% endif %}</td>
           </tr>
         {% endfor %}
       </tbody>

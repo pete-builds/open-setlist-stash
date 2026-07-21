@@ -930,6 +930,91 @@ table.leaderboard a:hover { color: var(--accent); text-decoration: underline; }
   table.leaderboard th, table.leaderboard td { padding: 0.55rem 0.6rem; }
 }
 
+/* ---- /shows table: reflow to labeled cards on mobile ----
+   The 4-column shows table (Show / Venue / Players / Status) is wider than a
+   phone viewport, and unlike the standings table its rows have no natural
+   "identity" column to anchor a horizontal scroll. Reflow each row into a
+   compact card: the date is the card header, the other fields sit under it as
+   left-aligned "LABEL value" lines fed by each cell's data-label. Self-
+   contained (scoped to .shows-table) so no other leaderboard table is touched;
+   desktop (>640px) keeps the plain table entirely.
+
+   Selectors are scoped as `table.leaderboard.shows-table` (two classes) ON
+   PURPOSE: a deployment theme (lot-poster, wappy-poster) loads AFTER this file
+   and restyles `table.leaderboard` / `table.leaderboard td` (chrome + mobile
+   padding) at single-class specificity. Matching on both classes raises us to
+   (0,2,x) so the card layout wins regardless of source order, same lesson as
+   the mobile-nav collapse above. */
+@media (max-width: 640px) {
+  table.leaderboard.shows-table,
+  table.leaderboard.shows-table tbody,
+  table.leaderboard.shows-table tr { display: block; width: 100%; }
+
+  /* Header row is redundant once cells self-label; keep it for assistive tech. */
+  table.leaderboard.shows-table thead {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Table chrome off; each row becomes the bordered card. */
+  table.leaderboard.shows-table {
+    border: 0;
+    box-shadow: none;
+    background: none;
+    font-size: 0.95rem;
+  }
+  table.leaderboard.shows-table tr {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+    padding: 0.75rem 0.9rem;
+    margin: 0 0 0.6rem;
+  }
+  table.leaderboard.shows-table tr:last-child { margin-bottom: 0; }
+  table.leaderboard.shows-table tbody tr:hover td { background: none; }
+
+  /* Cells stack tightly; each is a "LABEL  value" row. Flex keeps a wrapped
+     value (long venue names) hanging-indented under the value column instead
+     of falling back under the label. */
+  table.leaderboard.shows-table td {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    border-bottom: 0;
+    padding: 0.12rem 0;
+    text-align: left;
+  }
+  table.leaderboard.shows-table td.num { text-align: left; }
+  table.leaderboard.shows-table td::before {
+    content: attr(data-label);
+    flex: none;
+    min-width: 4.25rem;
+    font-family: "IBM Plex Sans", sans-serif;
+    font-weight: 600;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-soft);
+  }
+
+  /* Date is the card header: prominent, no label, with a hairline divider. */
+  table.leaderboard.shows-table td.show-date {
+    display: block;
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  table.leaderboard.shows-table td.show-date::before { content: none; }
+}
+
 /* ---- rich footer (multi-column) ---- */
 
 .footer-cols {
