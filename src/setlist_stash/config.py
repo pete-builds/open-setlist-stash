@@ -66,6 +66,14 @@ class Settings(BaseSettings):
     # gated off — the routes just 404/redirect and the templates hide the
     # links — so nothing is deleted and no migration is needed.
     enable_games: bool = Field(default=True)
+    # Whether the per-show comment threads render at all. True (the default)
+    # exposes the read-open, handle-gated comment section under each show's
+    # predictions page and mounts its routes. Set ENABLE_COMMENTS=false to hide
+    # the section and 404 the /show/{date}/comments + /comment/{id}/delete
+    # routes for a deployment that doesn't want threads. Same empty/false-means-
+    # off idiom as enable_games; the table + module still exist when gated off,
+    # so nothing is deleted and no migration is needed.
+    enable_comments: bool = Field(default=True)
     # Public Streamable-HTTP endpoint for this deployment's read-only MCP
     # server, surfaced on the /connect docs page so visitors can wire the
     # band's setlist data into their own MCP client (Claude Code, Claude

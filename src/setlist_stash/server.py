@@ -58,6 +58,12 @@ from setlist_stash.auth_google import (
     resolve_google_identity,
 )
 from setlist_stash.blog import get_post, load_posts
+from setlist_stash.comments import (
+    CommentError,
+    add_comment,
+    list_comments,
+    soft_delete_comment,
+)
 from setlist_stash.config import Settings, get_settings
 from setlist_stash.db import close_pool, get_pool, init_pool
 from setlist_stash.email import EmailProvider, EmailSendError, build_provider
@@ -263,7 +269,7 @@ async def _resolve_song_titles(
         try:
             song = await mcp.get_song(slug)
             return slug, str(song.get("title") or slug)
-        except Exception:  # noqa: BLE001 - best-effort labeling only
+        except Exception:  # best-effort labeling only
             return slug, slug
 
     try:
@@ -335,6 +341,11 @@ def build_app(
     # 404/redirect (see ``_games_gate``). The Phish demo and OSS image leave
     # this True; only the Wappy Picks deployment sets it false.
     templates.env.globals["enable_games"] = cfg.enable_games
+    # Whether the per-show comment thread renders + its routes are live. True
+    # (the default) shows the read-open, handle-gated thread under each show's
+    # predictions page. ENABLE_COMMENTS=false hides the section and 404s the
+    # comment routes for a deployment that doesn't want threads.
+    templates.env.globals["enable_comments"] = cfg.enable_comments
     # Whether to render the "Connect" (public MCP docs) nav link. True only
     # when a public MCP endpoint is configured for this deployment. Empty/unset
     # (the OSS image, the Phish demo) leaves the link off and the route serves a
@@ -1007,6 +1018,11 @@ def build_app(
         lock = await read_lock(pool, show_date)
         # Entrant count is fair to show pre-lock (a count reveals no picks).
         entrant_count = await count_entrants(pool, show_date)
+        # Comment thread — independent of lock state, rendered in every branch.
+        # Skip the query entirely when comments are disabled for the deployment.
+        comments = (
+            await list_comments(pool, show_date) if cfg.enable_comments else []
+        )
         if lock is None:
             # No prediction_locks row at all means the form was never opened;
             # treat as "no predictions yet" rather than 404.
@@ -1020,6 +1036,7 @@ def build_app(
                 resolved=False,
                 pre_lock=True,
                 entrant_count=entrant_count,
+                comments=comments,
             )
         if not lock.is_locked:
             # Pre-lock: never list predictions. Renders the panel with a
@@ -1034,6 +1051,7 @@ def build_app(
                 resolved=False,
                 pre_lock=True,
                 entrant_count=entrant_count,
+                comments=comments,
             )
         # Post-lock: this page IS the per-show leaderboard. Rank everyone by
         # current score (live scoring climbs this throughout the show; pre-score
@@ -1095,7 +1113,107 @@ def build_app(
             pre_lock=False,
             entrant_count=entrant_count,
             setlist_groups=setlist_groups,
+            comments=comments,
         )
+
+    # ----- per-show comment threads -----------------------------------------
+
+    def _comments_gate() -> Response | None:
+        """Return a 404 when comments are disabled for this deployment.
+
+        Mirrors ``_games_gate``: an off deployment exposes no comment surface,
+        even by direct URL. None when enabled so the route runs normally.
+        """
+        if cfg.enable_comments:
+            return None
+        return HTMLResponse("Not found", status_code=status.HTTP_404_NOT_FOUND)
+
+    def _comments_fragment(
+        request: Request,
+        user: Any,
+        comments: Any,
+        *,
+        error: str | None = None,
+    ) -> HTMLResponse:
+        """Render the inner comment-list fragment htmx swaps into #comments-list."""
+        return _render(
+            request,
+            "_comments_list.html",
+            current_user=user,
+            comments=comments,
+            comment_error=error,
+        )
+
+    @app.get("/show/{show_date}/comments", response_class=HTMLResponse)
+    async def get_comments(request: Request, show_date: date) -> Response:
+        """The fragment htmx polls (hx-get, every 12s). Read-open to anyone."""
+        if (gate := _comments_gate()) is not None:
+            return gate
+        user = await _resolve_user(request)
+        pool = get_pool()
+        comments = await list_comments(pool, show_date)
+        return _comments_fragment(request, user, comments)
+
+    @app.post("/show/{show_date}/comments")
+    async def post_comment(
+        request: Request,
+        show_date: date,
+        body: str = Form(...),
+    ) -> Response:
+        """Post a comment. Gated on having a handle (same gate as picks).
+
+        On success returns the refreshed inner list fragment (200) so the form's
+        hx-swap replaces #comments-list with the thread including the new post.
+        A validation failure re-renders the SAME fragment with an inline error
+        at 200 (htmx swaps only on 2xx, so the message lands in the thread). An
+        anonymous caller gets 401 — the post form is hidden for them anyway.
+        """
+        if (gate := _comments_gate()) is not None:
+            return gate
+        user = await _resolve_user(request)
+        pool = get_pool()
+        if user is None:
+            return JSONResponse(
+                {"error": "Pick a handle first."},
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+        try:
+            await add_comment(
+                pool, show_date=show_date, user_id=user.id, body=body
+            )
+        except CommentError as exc:
+            comments = await list_comments(pool, show_date)
+            return _comments_fragment(request, user, comments, error=str(exc))
+        comments = await list_comments(pool, show_date)
+        return _comments_fragment(request, user, comments)
+
+    @app.post("/comment/{comment_id}/delete")
+    async def delete_comment(
+        request: Request, comment_id: int
+    ) -> Response:
+        """Soft-delete a comment, author-only.
+
+        Returns the refreshed thread fragment on success. A non-author (or a
+        missing/already-deleted id) gets 403 without revealing which — the
+        author check lives in ``soft_delete_comment`` and returns the show_date
+        only when the requester actually owned the row.
+        """
+        if (gate := _comments_gate()) is not None:
+            return gate
+        user = await _resolve_user(request)
+        pool = get_pool()
+        if user is None:
+            return JSONResponse(
+                {"error": "Pick a handle first."},
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+        deleted_show_date = await soft_delete_comment(pool, comment_id, user.id)
+        if deleted_show_date is None:
+            return HTMLResponse(
+                "Forbidden", status_code=status.HTTP_403_FORBIDDEN
+            )
+        comments = await list_comments(pool, deleted_show_date)
+        return _comments_fragment(request, user, comments)
 
     @app.get("/u/{handle}", response_class=HTMLResponse)
     async def user_profile(request: Request, handle: str) -> HTMLResponse:

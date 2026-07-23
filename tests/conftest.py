@@ -63,7 +63,8 @@ async def pg_pool() -> AsyncIterator[asyncpg.Pool[Any] | None]:
     async with pool.acquire() as conn:
         await conn.execute(
             "TRUNCATE league_members, leagues, predictions, prediction_locks, "
-            "users, leaderboard_snapshots, scoring_runs RESTART IDENTITY CASCADE"
+            "comments, users, leaderboard_snapshots, scoring_runs "
+            "RESTART IDENTITY CASCADE"
         )
     try:
         yield pool

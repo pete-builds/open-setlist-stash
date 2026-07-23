@@ -112,4 +112,11 @@
       <a href="/show/{{ show_date }}/assist">Post-lock assist</a>
     </p>
   {% endif %}
+
+  {# Per-show comment thread. Sits under the leaderboard/predictions and renders
+     in every lock state (people talk about a show before and after it plays).
+     Gated on the enable_comments deployment flag. #}
+  {% if enable_comments %}
+    {% include "_comments.html" %}
+  {% endif %}
 {% endblock %}

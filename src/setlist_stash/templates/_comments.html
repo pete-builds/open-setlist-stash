@@ -1,0 +1,34 @@
+{# Per-show comment thread section. Rendered once inside show_predictions.html
+   (gated on the enable_comments global). The #comments-list div holds the
+   server-rendered list on first paint and then htmx-polls the GET fragment
+   every 12s (hx-swap="innerHTML"), so an open show page picks up other
+   players' comments without a manual reload. Read-open to everyone; the post
+   form only renders for a signed-in handle (the same gate as making picks). #}
+<section class="comments card" aria-label="Show comments">
+  <h2>Comments</h2>
+  <p class="muted comments-intro">One thread for everyone on this show.</p>
+
+  <div id="comments-list"
+       hx-get="/show/{{ show_date }}/comments"
+       hx-trigger="load, every 12s"
+       hx-swap="innerHTML">
+    {% include "_comments_list.html" %}
+  </div>
+
+  {% if current_user %}
+    <form class="comment-form"
+          hx-post="/show/{{ show_date }}/comments"
+          hx-target="#comments-list"
+          hx-swap="innerHTML"
+          hx-on::after-request="if(event.detail.successful) this.reset()">
+      <textarea name="body" rows="2" maxlength="1000" required
+                aria-label="Add a comment"
+                placeholder="Add to the thread…"></textarea>
+      <button type="submit" class="btn">Post</button>
+    </form>
+  {% else %}
+    <p class="muted comments-signedout">
+      <a href="/">Pick a handle</a> to join the thread.
+    </p>
+  {% endif %}
+</section>

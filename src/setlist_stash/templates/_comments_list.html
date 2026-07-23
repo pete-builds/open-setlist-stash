@@ -1,0 +1,33 @@
+{# Inner comment list — the fragment htmx polls (hx-get) and swaps into
+   #comments-list via innerHTML. Returned by BOTH GET and POST /show/{date}/
+   comments and by POST /comment/{id}/delete. Renders the live comments oldest
+   first, plus an optional inline error banner (validation failures re-render
+   this same fragment so the message lands inside the swap target).
+
+   Autoescaped: c.body is user content and is rendered with {{ }} only —
+   NEVER |safe. #}
+{% if comment_error %}
+  <p class="error comments-error" role="alert">{{ comment_error }}</p>
+{% endif %}
+{% if comments %}
+  <ul class="comments-list" role="list">
+    {% for c in comments %}
+      <li class="comment" id="comment-{{ c.id }}">
+        <div class="comment-head">
+          <a class="comment-handle" href="/u/{{ c.handle }}">{{ c.handle }}</a>
+          <span class="comment-time muted">{{ c.created_at.strftime('%b %-d, %-I:%M %p UTC') }}</span>
+          {% if current_user and current_user.id == c.user_id %}
+            <button type="button" class="comment-delete link-btn"
+                    hx-post="/comment/{{ c.id }}/delete"
+                    hx-target="#comments-list"
+                    hx-swap="innerHTML"
+                    hx-confirm="Delete your comment?">delete</button>
+          {% endif %}
+        </div>
+        <p class="comment-body">{{ c.body }}</p>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="muted comments-empty">No comments yet. Start the thread.</p>
+{% endif %}
