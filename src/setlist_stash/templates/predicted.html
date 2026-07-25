@@ -12,6 +12,22 @@
     The same picks count on every scoreboard you're in.
   </p>
 
+  {# Modify-your-picks affordance. The picks upsert (server + DB-trigger)
+     stays editable until lock_at; mirror that same lock check here so the
+     UI and enforcement agree. Open lock -> offer the edit link back into the
+     same form; locked -> show the read-only "locked" state instead. #}
+  {% if lock %}
+    {% if not lock.is_locked %}
+      <p class="modify-picks">
+        <a class="btn" href="/predict/{{ show_date }}">Modify your picks</a>
+        <span class="muted">You can change them until <strong>{{ lock.lock_at_display }}</strong>
+          ({{ lock.countdown_human }} from now).</span>
+      </p>
+    {% else %}
+      <p class="muted">Picks locked at {{ lock.lock_at_display }} — no more changes.</p>
+    {% endif %}
+  {% endif %}
+
   {% if enable_games and game and game_invite_url %}
     <div class="card share-game-card">
       <h2>🎸 Play with friends — share your game</h2>

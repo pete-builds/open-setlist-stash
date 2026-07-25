@@ -24,7 +24,7 @@
   {% if theme_file %}
   <link rel="stylesheet" href="/static/{{ theme_file }}?v={{ asset_version }}">
   {% endif %}
-  <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+  <script src="/static/vendor/htmx.min.js?v={{ asset_version }}"></script>
   {% block head_extra %}{% endblock %}
 </head>
 <body>
@@ -50,7 +50,10 @@
       {% if current_user %}
         {% if enable_games %}<a href="/leagues">Games</a>{% endif %}
         <a href="/account">Account</a>
-      {% elif email_enabled %}
+        <form method="post" action="/logout" class="nav-logout">
+          <button type="submit" class="nav-logout-btn">Sign out</button>
+        </form>
+      {% elif email_enabled or google_oauth_enabled %}
         <a href="/auth/login">Sign in</a>
       {% endif %}
     </nav>
@@ -76,6 +79,13 @@
         <a href="/about">About</a>
         {% if has_mcp %}<a href="/connect">Connect (MCP)</a>{% endif %}
         {% if has_blog %}<a href="/blog">Blog</a>{% endif %}
+        {% if data_source_name %}
+          {% if data_source_url %}
+            <a href="{{ data_source_url }}" target="_blank" rel="noopener">Data provided by {{ data_source_name }}</a>
+          {% else %}
+            <a>Data provided by {{ data_source_name }}</a>
+          {% endif %}
+        {% endif %}
       </div>
       <div class="footer-col">
         <h4>Project</h4>

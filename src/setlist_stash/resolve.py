@@ -30,6 +30,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import asyncpg
 
@@ -644,8 +645,24 @@ async def run_tick(settings: Settings) -> TickResult:
         raise
 
 
-async def latest_run_summary(pool: asyncpg.Pool[Any]) -> dict[str, Any] | None:
-    """Return ``{started_at, finished_at, status}`` for the most recent run."""
+async def latest_run_summary(
+    pool: asyncpg.Pool[Any], *, display_tz: str = "America/New_York"
+) -> dict[str, Any] | None:
+    """Return ``{started_at, finished_at, status}`` for the most recent run.
+
+    Timestamps come back as ISO-8601 in ``display_tz`` (Eastern), not UTC.
+    /healthz is the operator-visible status surface, so the resolver heartbeat
+    should read in the same clock as the rest of the site. The offset stays on
+    the string, so it is still an unambiguous instant for machine consumers.
+    """
+    tz = ZoneInfo(display_tz)
+
+    def _iso(value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return aware.astimezone(tz).isoformat()
+
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -658,8 +675,8 @@ async def latest_run_summary(pool: asyncpg.Pool[Any]) -> dict[str, Any] | None:
     if row is None:
         return None
     return {
-        "started_at": row["started_at"].isoformat() if row["started_at"] else None,
-        "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+        "started_at": _iso(row["started_at"]),
+        "finished_at": _iso(row["finished_at"]),
         "status": row["status"],
     }
 

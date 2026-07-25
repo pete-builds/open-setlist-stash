@@ -1,7 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Sign in — {{ site_name }}{% endblock %}
 {% block content %}
-  <h1>Sign in by email</h1>
+  <h1>Sign in</h1>
+
+  {% if google_oauth_enabled %}
+    <p>
+      <a class="btn btn-primary" href="/auth/google/start">Sign in with Google</a>
+    </p>
+    {% if provider_enabled %}
+      <p class="muted">Or sign in with the email attached to your handle:</p>
+    {% endif %}
+  {% endif %}
+
+  <h2>Sign in by email</h2>
   <p>
     Enter the email attached to your {{ site_name }} handle. We'll send a one-time
     sign-in link.

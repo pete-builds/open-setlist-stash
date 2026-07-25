@@ -20,16 +20,20 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, datetime
+from functools import partial
 from html import escape
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import asyncpg
 import uvicorn
+from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import FastAPI, Form, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from setlist_stash import __version__
 from setlist_stash.auth import (
@@ -40,6 +44,7 @@ from setlist_stash.auth import (
     create_user,
     current_user,
     sign_user_id,
+    update_handle,
     validate_handle,
 )
 from setlist_stash.auth_email import (
@@ -50,7 +55,17 @@ from setlist_stash.auth_email import (
     request_login_link,
     verify_token,
 )
+from setlist_stash.auth_google import (
+    GoogleLinkConflict,
+    resolve_google_identity,
+)
 from setlist_stash.blog import get_post, load_posts
+from setlist_stash.comments import (
+    CommentError,
+    add_comment,
+    list_comments,
+    soft_delete_comment,
+)
 from setlist_stash.config import Settings, get_settings
 from setlist_stash.db import close_pool, get_pool, init_pool
 from setlist_stash.email import EmailProvider, EmailSendError, build_provider
@@ -89,6 +104,7 @@ from setlist_stash.locks import (
     get_or_create_lock,
     read_lock,
     select_form_show,
+    select_next_show,
 )
 from setlist_stash.logging_setup import configure_logging
 from setlist_stash.mcp_client import McpPhishClient, McpPhishError
@@ -198,6 +214,152 @@ def _gap_label(gap: Any) -> str:
     return f"{n} show gap"
 
 
+def _humanize_countdown(seconds: int) -> str:
+    """Human-readable "time until lock" as hours and minutes.
+
+    - under 1 hour  -> ``43m``
+    - 1h to <24h    -> ``5h 12m`` (99595s -> ``27h 40m`` becomes ``1d 3h 40m``)
+    - 24h or more   -> ``1d 3h 40m`` (days prepended, then hours + minutes)
+    - zero/negative -> ``0m`` (callers should guard the locked state upstream)
+
+    Seconds are intentionally dropped: this is a static, server-rendered label
+    (the live ticking countdown on the predict page is a separate JS widget).
+    """
+    secs = max(int(seconds), 0)
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def home_card_state(
+    *,
+    upcoming_date: date | None,
+    live_date: date | None,
+    is_locked: bool,
+) -> str:
+    """Which of four states the home page's show card is in.
+
+    - ``"no_show"``  nothing announced on the board.
+    - ``"live"``     the target show is the one being played right now.
+    - ``"over"``     the target show is locked and NOT being played, i.e. it
+      has finished. ``select_form_show`` is date-only, so it keeps returning
+      tonight's show until midnight Eastern; without this state the card would
+      spend the rest of the night calling a finished show "Next show" and
+      offering a pick sheet that can no longer be submitted to.
+    - ``"pre_lock"`` picks are open.
+
+    Order matters: ``live`` is checked before ``over`` because a show in
+    progress is also locked.
+    """
+    if upcoming_date is None:
+        return "no_show"
+    if live_date is not None and live_date == upcoming_date:
+        return "live"
+    if is_locked:
+        return "over"
+    return "pre_lock"
+
+
+def display_now(settings: Settings) -> datetime:
+    """Wallclock "now" in the viewer-facing display zone.
+
+    Every user-facing date boundary ("is this show today?", "which show played
+    last night?") must be evaluated here, not in UTC. Containers run with
+    ``TZ=UTC``, so a bare ``date.today()`` rolls over to tomorrow at 8pm
+    Eastern — mid-show, which is exactly when it matters most.
+    """
+    return datetime.now(tz=ZoneInfo(settings.display_tz))
+
+
+def display_dt(
+    value: Any,
+    fmt: str = "%b %-d, %-I:%M %p %Z",
+    *,
+    tz: str = "America/New_York",
+) -> str:
+    """Jinja filter: render a timestamp in the display zone (Eastern).
+
+    Registered as ``|display_dt`` (bound to ``DISPLAY_TZ``) so no template ever
+    formats a raw stored instant. Timestamps are stored and compared in UTC;
+    this is the single conversion point on the way out. A naive datetime is
+    assumed to be UTC, which is what every naive value in this codebase means.
+    ``%Z`` renders a DST-correct label — EDT in summer, EST in winter — so a
+    viewer never sees a UTC clock time.
+    """
+    if not isinstance(value, datetime):
+        return "" if value is None else str(value)
+    aware = (
+        value if value.tzinfo is not None else value.replace(tzinfo=ZoneInfo("UTC"))
+    )
+    return aware.astimezone(ZoneInfo(tz)).strftime(fmt)
+
+
+# How long past its lock instant a show still counts as "playing right now" on
+# the home page. The resolver only stamps ``resolved_at`` once the setlist is
+# published upstream, which routinely lags the encore by hours, so the live
+# entry point needs its own time box or it would linger until the next morning.
+# Lock lands at showtime, so this window covers doors-to-encore plus slop.
+LIVE_SHOW_WINDOW_HOURS = 6
+
+
+async def home_show_pointers(
+    pool: asyncpg.Pool[Any],
+) -> tuple[date | None, date | None]:
+    """Resolve the home page's two show pointers from ``prediction_locks``.
+
+    Returns ``(live_show_date, recent_show_date)``:
+
+    - **live**: the show playing right now — locked, not yet finalized, and
+      still inside ``LIVE_SHOW_WINDOW_HOURS`` of its lock instant. Drives the
+      showtime-only "watch it live" button.
+    - **recent**: the most recently played show, excluding whichever one is
+      live. Drives the "last show's setlist" entry point, which is what
+      players reach for the morning after.
+
+    DB-only (no upstream call) and safe on an empty table: every show the game
+    targets gets a ``prediction_locks`` row the first time the home page or the
+    predict form resolves it, so this table is the reliable show spine.
+
+    Timezone: the window is pure instant arithmetic on two ``TIMESTAMPTZ``
+    values, so it is correct regardless of the container's ``TZ``. It never
+    computes a calendar "today", which is the thing that breaks under UTC.
+    ``lock_at`` itself is anchored to the venue's local showtime (see
+    ``locks.compute_default_lock_at``) and is rendered to viewers in
+    ``DISPLAY_TZ`` (Eastern), so nothing here surfaces a UTC clock.
+    """
+    async with pool.acquire() as conn:
+        live: date | None = await conn.fetchval(
+            """
+            SELECT show_date
+              FROM prediction_locks
+             WHERE resolved_at IS NULL
+               AND COALESCE(lock_at_override, lock_at) <= now()
+               AND COALESCE(lock_at_override, lock_at)
+                     > now() - ($1 || ' hours')::interval
+             ORDER BY show_date DESC
+             LIMIT 1
+            """,
+            str(LIVE_SHOW_WINDOW_HOURS),
+        )
+        recent: date | None = await conn.fetchval(
+            """
+            SELECT show_date
+              FROM prediction_locks
+             WHERE COALESCE(lock_at_override, lock_at) <= now()
+               AND ($1::date IS NULL OR show_date <> $1::date)
+             ORDER BY show_date DESC
+             LIMIT 1
+            """,
+            live,
+        )
+    return live, recent
+
+
 def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
     # Render in the viewer-facing display tz (Eastern by default), not the
     # anchor tz the lock was computed in. strftime("%Z") on a ZoneInfo zone is
@@ -212,6 +374,8 @@ def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
         # the predict-page countdown and post-lock panels.
         "lock_at_iso": lock.lock_at.isoformat(),
         "seconds_until_lock": max(lock.seconds_until_lock, 0),
+        # Human-readable "Xh Ym from now" for static server-rendered labels.
+        "countdown_human": _humanize_countdown(lock.seconds_until_lock),
     }
 
 
@@ -232,7 +396,7 @@ async def _resolve_song_titles(
         try:
             song = await mcp.get_song(slug)
             return slug, str(song.get("title") or slug)
-        except Exception:  # noqa: BLE001 - best-effort labeling only
+        except Exception:  # best-effort labeling only
             return slug, slug
 
     try:
@@ -264,6 +428,11 @@ def build_app(
     provider: EmailProvider = email_provider or build_provider(cfg)
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    # Single display-layer timezone conversion for every timestamp the site
+    # renders. Storage and comparison stay UTC; templates call
+    # ``{{ ts|display_dt }}`` and always get DISPLAY_TZ (Eastern by default,
+    # DST-aware via ZoneInfo). No template formats a stored instant directly.
+    templates.env.filters["display_dt"] = partial(display_dt, tz=cfg.display_tz)
     templates.env.globals["site_name"] = cfg.site_name
     templates.env.globals["theme_file"] = cfg.theme_file
     # Content hash of the CSS, appended as ``?v=`` to the static stylesheet
@@ -271,6 +440,8 @@ def build_app(
     templates.env.globals["asset_version"] = _compute_asset_version(cfg.theme_file)
     templates.env.globals["footer_credit"] = cfg.footer_credit
     templates.env.globals["footer_credit_url"] = cfg.footer_credit_url
+    templates.env.globals["data_source_name"] = cfg.data_source_name
+    templates.env.globals["data_source_url"] = cfg.data_source_url
     # GA4 measurement ID. Empty (default) renders no analytics tag at all, so
     # the OSS image / third-party self-host stay clean. Set per deployment via
     # the ANALYTICS_ID env var; base.html guards the gtag snippet on it.
@@ -283,6 +454,12 @@ def build_app(
     # provider is disabled (default), so the email entry points disappear for
     # any deployment without email configured.
     templates.env.globals["email_enabled"] = provider.name != "disabled"
+    # Whether the "Sign in with Google" entry points render at all. True only
+    # when a Google OAuth client is fully configured for this deployment; empty
+    # (the default) leaves every Google button off and the /auth/google/* routes
+    # redirect home — so the OSS image, the Wappy sibling, and any third-party
+    # self-host stay unaffected until they opt in (Phase 1 Google SSO).
+    templates.env.globals["google_oauth_enabled"] = cfg.google_oauth_enabled
     # Whether to render the nav "Blog" link. True only when the bind-mounted
     # BLOG_DIR holds at least one parseable post. Empty/missing dir (the Phish
     # demo, third-party self-host) leaves the link off entirely. Evaluated at
@@ -296,6 +473,11 @@ def build_app(
     # 404/redirect (see ``_games_gate``). The Phish demo and OSS image leave
     # this True; only the Wappy Picks deployment sets it false.
     templates.env.globals["enable_games"] = cfg.enable_games
+    # Whether the per-show comment thread renders + its routes are live. True
+    # (the default) shows the read-open, handle-gated thread under each show's
+    # predictions page. ENABLE_COMMENTS=false hides the section and 404s the
+    # comment routes for a deployment that doesn't want threads.
+    templates.env.globals["enable_comments"] = cfg.enable_comments
     # Whether to render the "Connect" (public MCP docs) nav link. True only
     # when a public MCP endpoint is configured for this deployment. Empty/unset
     # (the OSS image, the Phish demo) leaves the link off and the route serves a
@@ -320,6 +502,23 @@ def build_app(
         )
     mcp_rate_limiter = FixedWindowRateLimiter(cfg.mcp_rate_limit_per_minute)
 
+    # Google SSO (Phase 1): register the OIDC client only when configured.
+    # Authlib pulls Google's discovery document + JWKS lazily on first use and
+    # verifies the id_token signature/claims for us. When disabled (default),
+    # ``oauth`` stays None and the /auth/google/* routes redirect home.
+    oauth: OAuth | None = None
+    if cfg.google_oauth_enabled:
+        oauth = OAuth()
+        oauth.register(
+            name="google",
+            client_id=cfg.google_client_id,
+            client_secret=cfg.google_client_secret.get_secret_value(),
+            server_metadata_url=(
+                "https://accounts.google.com/.well-known/openid-configuration"
+            ),
+            client_kwargs={"scope": "openid email profile"},
+        )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # Startup: pool + migrations.
@@ -339,6 +538,20 @@ def build_app(
         version=__version__,
         description="Open-source setlist prediction game.",
         lifespan=lifespan,
+    )
+
+    # Starlette session cookie used ONLY to carry the OAuth ``state``/``nonce``
+    # across the Google redirect (Phase 1 Google SSO). It is short-lived and
+    # completely separate from the primary ``phishgame_session`` signed-cookie
+    # identity, which is untouched. Keyed with the same session_secret so no new
+    # secret is needed; ``https_only`` follows COOKIE_SECURE.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=cfg.session_secret.get_secret_value(),
+        session_cookie="phishgame_oauth",
+        max_age=600,  # 10 min: only needs to survive the round-trip to Google
+        same_site="lax",
+        https_only=cfg.cookie_secure,
     )
 
     # Per-IP rate limit, scoped to the public /mcp proxy ONLY. The game UI,
@@ -386,7 +599,7 @@ def build_app(
             max_age=COOKIE_MAX_AGE_SECONDS,
             httponly=True,
             samesite="lax",
-            secure=False,  # LAN/Tailscale; Phase 6 enables Secure under HTTPS
+            secure=cfg.cookie_secure,  # True on HTTPS deployments (COOKIE_SECURE)
         )
 
     # ----- routes -----------------------------------------------------------
@@ -394,32 +607,88 @@ def build_app(
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         user = await _resolve_user(request)
+        # Two DB-only show pointers (see home_show_pointers): the show playing
+        # right now, and the most recently played one. Cheap enough to run on
+        # every landing-page hit and independent of upstream availability.
+        live_show: dict[str, Any] | None = None
+        recent_show: dict[str, Any] | None = None
+        live_date: date | None = None
+        recent_date: date | None = None
+        try:
+            live_date, recent_date = await home_show_pointers(get_pool())
+            if live_date is not None:
+                live_show = {"show_date": live_date, "venue": None}
+            if recent_date is not None:
+                recent_show = {"show_date": recent_date, "venue": None}
+        except RuntimeError:
+            pass
+        # Lock display state + entrant count for a show. Lazily creates the
+        # prediction_locks row (that is how a show first joins the board).
+        # ``(None, 0)`` when the pool isn't up, so the page still renders.
+        async def _lock_context(show: Any) -> tuple[dict[str, Any] | None, int]:
+            try:
+                pool = get_pool()
+            except RuntimeError:
+                return None, 0
+            lock = await get_or_create_lock(pool, show, cfg)
+            # Entrant count is a count only (no picks revealed), so it is fair
+            # to show pre-lock.
+            return _format_lock(lock, cfg), await count_entrants(pool, show.show_date)
+
         # Resolve the upcoming show for everyone (not just signed-in users) so
         # the home-page countdown widget renders for anonymous visitors too.
         upcoming = None
+        upcoming_lock: dict[str, Any] | None = None
+        entrant_count = 0
+        card_state = "no_show"
         try:
             async with McpPhishClient(
                 cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
             ) as mcp:
                 upcoming = await select_form_show(cfg, mcp)
+                # Best-effort venue labels for the live / most-recent buttons,
+                # on the client we already have open. A failure here leaves the
+                # bare date, which still links correctly.
+                for card in (live_show, recent_show):
+                    if card is None:
+                        continue
+                    try:
+                        meta = await mcp.get_show(card["show_date"].isoformat())
+                    except McpPhishError:
+                        continue
+                    venue = meta.get("venue") or {}
+                    if isinstance(venue, dict):
+                        card["venue"] = venue.get("name") or venue.get("location")
+                if upcoming is not None:
+                    upcoming_lock, entrant_count = await _lock_context(upcoming)
+                    card_state = home_card_state(
+                        upcoming_date=upcoming.show_date,
+                        live_date=live_date,
+                        is_locked=bool(upcoming_lock and upcoming_lock["is_locked"]),
+                    )
+                    # The target show is locked and not being played, so it is
+                    # over. select_form_show is date-only and would keep
+                    # returning it until midnight Eastern; advance the board to
+                    # the next announced show instead. If nothing follows (end
+                    # of tour) we keep what we have and the template suppresses
+                    # the picks CTA rather than linking a locked sheet.
+                    if card_state == "over":
+                        nxt = await select_next_show(
+                            cfg, mcp, after=upcoming.show_date
+                        )
+                        if nxt is not None:
+                            upcoming = nxt
+                            upcoming_lock, entrant_count = await _lock_context(nxt)
+                            card_state = home_card_state(
+                                upcoming_date=nxt.show_date,
+                                live_date=live_date,
+                                is_locked=bool(
+                                    upcoming_lock and upcoming_lock["is_locked"]
+                                ),
+                            )
         except McpPhishError:
             logger.warning("mcp-phish unreachable on /; rendering without show")
             upcoming = None
-        # Lock for the upcoming show, so the hero countdown has a target. Same
-        # _format_lock shape the predict page consumes (lock_at_iso + display +
-        # is_locked). Needs the DB pool; skip gracefully if it isn't up.
-        upcoming_lock = None
-        entrant_count = 0
-        if upcoming is not None:
-            try:
-                pool = get_pool()
-                lock = await get_or_create_lock(pool, upcoming, cfg)
-                upcoming_lock = _format_lock(lock, cfg)
-                # How many players are in for the upcoming show. Count only
-                # (no picks revealed), so it's fair to show pre-lock.
-                entrant_count = await count_entrants(pool, upcoming.show_date)
-            except RuntimeError:
-                upcoming_lock = None
         return _render(
             request,
             "index.html",
@@ -428,6 +697,9 @@ def build_app(
             upcoming_show=upcoming,
             upcoming_lock=upcoming_lock,
             entrant_count=entrant_count,
+            live_show=live_show,
+            recent_show=recent_show,
+            card_state=card_state,
         )
 
     def _safe_next(raw: str) -> str:
@@ -495,23 +767,29 @@ def build_app(
             async with McpPhishClient(
                 cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
             ) as mcp:
-                rows = await mcp.recent_shows(limit=20)
-            for row in rows:
-                if str(row.get("date")) == show_date.isoformat():
-                    raw_id = row.get("show_id")
-                    show_id = str(raw_id) if raw_id else None
-                    venue_name = row.get("venue_name") or None
-                    location = row.get("location") or None
-                    tour_name = row.get("tour_name") or None
-                    break
+                # Targeted per-date lookup so ANY tour date resolves its venue,
+                # regardless of how far the vault reaches into the future. The
+                # old recent_shows(limit=N) scan is date-DESC windowed and misses
+                # the earliest tour dates once far-future shows exist upstream.
+                row = await mcp.get_show(show_date.isoformat())
+            raw_id = row.get("show_id")
+            show_id = str(raw_id) if raw_id else None
+            venue = row.get("venue") or {}
+            venue_name = (venue.get("name") if isinstance(venue, dict) else None) or None
+            location = (
+                venue.get("location") if isinstance(venue, dict) else None
+            ) or None
+            tour_name = row.get("tour_name") or None
         except McpPhishError:
+            # McpPhishNotFound (no show that date) and unavailability both land
+            # here; venue/location stay None and the page degrades gracefully.
             logger.warning(
-                "mcp-phish unreachable for show lookup",
+                "mcp-phish show lookup missed",
                 extra={"show_date": str(show_date)},
             )
 
-        # Operator-set target show: prefer its venue/location. An upcoming show
-        # can sit outside the recent_shows window, so the scan above may miss it.
+        # Operator-set target show: prefer its venue/location. Kept as a
+        # belt-and-suspenders override for a manually pinned show.
         if cfg.admin_show_date and show_date == cfg.admin_show_date:
             venue_name = cfg.admin_show_venue or venue_name
             location = cfg.admin_show_location or location
@@ -738,6 +1016,11 @@ def build_app(
             game=game,
             game_invite_url=game_invite_url,
             game_members=game_members,
+            # Lock state so the confirmation page can offer a "Modify your
+            # picks" affordance while the lock is still open (gated on the same
+            # lock check the upsert/DB-trigger enforce). lock was just read
+            # above and passed the open-lock gate to reach this success path.
+            lock=_format_lock(lock, cfg),
         )
 
     async def _re_render_predict(
@@ -926,6 +1209,11 @@ def build_app(
         lock = await read_lock(pool, show_date)
         # Entrant count is fair to show pre-lock (a count reveals no picks).
         entrant_count = await count_entrants(pool, show_date)
+        # Comment thread — independent of lock state, rendered in every branch.
+        # Skip the query entirely when comments are disabled for the deployment.
+        comments = (
+            await list_comments(pool, show_date) if cfg.enable_comments else []
+        )
         if lock is None:
             # No prediction_locks row at all means the form was never opened;
             # treat as "no predictions yet" rather than 404.
@@ -939,6 +1227,7 @@ def build_app(
                 resolved=False,
                 pre_lock=True,
                 entrant_count=entrant_count,
+                comments=comments,
             )
         if not lock.is_locked:
             # Pre-lock: never list predictions. Renders the panel with a
@@ -953,6 +1242,7 @@ def build_app(
                 resolved=False,
                 pre_lock=True,
                 entrant_count=entrant_count,
+                comments=comments,
             )
         # Post-lock: this page IS the per-show leaderboard. Rank everyone by
         # current score (live scoring climbs this throughout the show; pre-score
@@ -1014,7 +1304,107 @@ def build_app(
             pre_lock=False,
             entrant_count=entrant_count,
             setlist_groups=setlist_groups,
+            comments=comments,
         )
+
+    # ----- per-show comment threads -----------------------------------------
+
+    def _comments_gate() -> Response | None:
+        """Return a 404 when comments are disabled for this deployment.
+
+        Mirrors ``_games_gate``: an off deployment exposes no comment surface,
+        even by direct URL. None when enabled so the route runs normally.
+        """
+        if cfg.enable_comments:
+            return None
+        return HTMLResponse("Not found", status_code=status.HTTP_404_NOT_FOUND)
+
+    def _comments_fragment(
+        request: Request,
+        user: Any,
+        comments: Any,
+        *,
+        error: str | None = None,
+    ) -> HTMLResponse:
+        """Render the inner comment-list fragment htmx swaps into #comments-list."""
+        return _render(
+            request,
+            "_comments_list.html",
+            current_user=user,
+            comments=comments,
+            comment_error=error,
+        )
+
+    @app.get("/show/{show_date}/comments", response_class=HTMLResponse)
+    async def get_comments(request: Request, show_date: date) -> Response:
+        """The fragment htmx polls (hx-get, every 12s). Read-open to anyone."""
+        if (gate := _comments_gate()) is not None:
+            return gate
+        user = await _resolve_user(request)
+        pool = get_pool()
+        comments = await list_comments(pool, show_date)
+        return _comments_fragment(request, user, comments)
+
+    @app.post("/show/{show_date}/comments")
+    async def post_comment(
+        request: Request,
+        show_date: date,
+        body: str = Form(...),
+    ) -> Response:
+        """Post a comment. Gated on having a handle (same gate as picks).
+
+        On success returns the refreshed inner list fragment (200) so the form's
+        hx-swap replaces #comments-list with the thread including the new post.
+        A validation failure re-renders the SAME fragment with an inline error
+        at 200 (htmx swaps only on 2xx, so the message lands in the thread). An
+        anonymous caller gets 401 — the post form is hidden for them anyway.
+        """
+        if (gate := _comments_gate()) is not None:
+            return gate
+        user = await _resolve_user(request)
+        pool = get_pool()
+        if user is None:
+            return JSONResponse(
+                {"error": "Pick a handle first."},
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+        try:
+            await add_comment(
+                pool, show_date=show_date, user_id=user.id, body=body
+            )
+        except CommentError as exc:
+            comments = await list_comments(pool, show_date)
+            return _comments_fragment(request, user, comments, error=str(exc))
+        comments = await list_comments(pool, show_date)
+        return _comments_fragment(request, user, comments)
+
+    @app.post("/comment/{comment_id}/delete")
+    async def delete_comment(
+        request: Request, comment_id: int
+    ) -> Response:
+        """Soft-delete a comment, author-only.
+
+        Returns the refreshed thread fragment on success. A non-author (or a
+        missing/already-deleted id) gets 403 without revealing which — the
+        author check lives in ``soft_delete_comment`` and returns the show_date
+        only when the requester actually owned the row.
+        """
+        if (gate := _comments_gate()) is not None:
+            return gate
+        user = await _resolve_user(request)
+        pool = get_pool()
+        if user is None:
+            return JSONResponse(
+                {"error": "Pick a handle first."},
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+        deleted_show_date = await soft_delete_comment(pool, comment_id, user.id)
+        if deleted_show_date is None:
+            return HTMLResponse(
+                "Forbidden", status_code=status.HTTP_403_FORBIDDEN
+            )
+        comments = await list_comments(pool, deleted_show_date)
+        return _comments_fragment(request, user, comments)
 
     @app.get("/u/{handle}", response_class=HTMLResponse)
     async def user_profile(request: Request, handle: str) -> HTMLResponse:
@@ -1112,37 +1502,50 @@ def build_app(
                  ORDER BY pl.show_date DESC
                 """
             )
-        # Best-effort venue lookup, keyed by ISO date. One mcp call; degrade to
-        # bare dates if it's unreachable so the archive always renders.
+        # Best-effort venue lookup, keyed by ISO date. Query each year present
+        # in the archive via search_shows (covers played + announced-future
+        # shows for the whole tour), instead of a date-DESC recent_shows window
+        # that misses the earliest tour dates once far-future shows exist.
+        # Degrade to bare dates if upstream is down so the archive always renders.
         venue_by_date: dict[str, str] = {}
+        years = sorted({r["show_date"].year for r in rows})
         try:
             async with McpPhishClient(
                 cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
             ) as mcp:
-                recent = await mcp.recent_shows(limit=50)
-            for row in recent:
-                d = str(row.get("date") or "")
-                name = row.get("venue_name") or row.get("location") or ""
-                if d and name:
-                    venue_by_date[d] = str(name)
+                for yr in years:
+                    for row in await mcp.search_shows(year=yr, limit=120):
+                        d = str(row.get("date") or "")
+                        name = row.get("venue_name") or row.get("location") or ""
+                        if d and name:
+                            venue_by_date[d] = str(name)
         except McpPhishError:
             logger.warning("mcp-phish unreachable on /shows; bare dates only")
-        shows: list[dict[str, Any]] = []
+        # Split into upcoming vs past against "today" in the display timezone.
+        # Rows arrive newest-first (query ORDER BY show_date DESC). Past keeps
+        # that order (most-recent past at the top). Upcoming gets reversed to
+        # ascending so the SOONEST future show sits at the top and further-out
+        # shows descend down the list.
+        today = datetime.now(tz=ZoneInfo(cfg.display_tz)).date()
+        upcoming: list[dict[str, Any]] = []
+        past: list[dict[str, Any]] = []
         for r in rows:
             iso = r["show_date"].isoformat()
-            shows.append(
-                {
-                    "show_date": r["show_date"],
-                    "venue": venue_by_date.get(iso),
-                    "entrants": int(r["entrants"]),
-                    "resolved": r["resolved_at"] is not None,
-                }
-            )
+            entry = {
+                "show_date": r["show_date"],
+                "venue": venue_by_date.get(iso),
+                "entrants": int(r["entrants"]),
+                "resolved": r["resolved_at"] is not None,
+            }
+            (past if r["show_date"] < today else upcoming).append(entry)
+        # DESC append order gives newest-first; reverse upcoming to soonest-first.
+        upcoming.reverse()
         return _render(
             request,
             "shows.html",
             current_user=viewer,
-            shows=shows,
+            upcoming=upcoming,
+            past=past,
         )
 
     @app.get("/stats", response_class=HTMLResponse)
@@ -1612,7 +2015,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return redirect
 
@@ -1809,7 +2212,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return redirect
 
@@ -1855,7 +2258,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return redirect
 
@@ -1891,6 +2294,125 @@ def build_app(
         return RedirectResponse(
             "/leagues", status_code=status.HTTP_303_SEE_OTHER
         )
+
+    # ----- Phase 1: Google SSO + logout -------------------------------------
+
+    def _oauth_error_page(
+        request: Request,
+        *,
+        message: str,
+        current: Any,
+        code: int,
+    ) -> Response:
+        """Render the shared auth-error template for a failed Google sign-in."""
+        resp = _render(
+            request,
+            "auth_verify_error.html",
+            current_user=current,
+            message=message,
+            ttl_hours=cfg.magic_link_ttl_hours,
+            signed_in=current is not None,
+        )
+        resp.status_code = code
+        return resp
+
+    @app.get("/auth/google/start")
+    async def google_start(request: Request) -> Response:
+        """Kick off the Google OAuth redirect (scope: openid email profile).
+
+        Redirects home when Google SSO is not configured for this deployment.
+        """
+        if oauth is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        # Authlib stashes state + nonce in the (session-middleware) cookie and
+        # returns the redirect to Google's consent screen.
+        return await oauth.google.authorize_redirect(  # type: ignore[no-any-return]
+            request, cfg.google_redirect_uri
+        )
+
+    @app.get("/auth/google/callback")
+    async def google_callback(request: Request) -> Response:
+        """Handle Google's redirect back: verify the id_token, resolve the
+        account, set the session cookie, and land on /account.
+        """
+        if oauth is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        current = await _resolve_user(request)
+        try:
+            # Authlib verifies the id_token signature + claims (aud/iss/exp/
+            # nonce) against Google's JWKS and returns the parsed OIDC claims
+            # under token["userinfo"].
+            token = await oauth.google.authorize_access_token(request)
+        except OAuthError as exc:
+            logger.warning("google oauth error", extra={"err": str(exc)})
+            return _oauth_error_page(
+                request,
+                message="Google sign-in failed or was cancelled. Please try again.",
+                current=current,
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        userinfo = token.get("userinfo") or {}
+        google_sub = str(userinfo.get("sub") or "")
+        if not google_sub:
+            return _oauth_error_page(
+                request,
+                message="Google did not return an account id. Please try again.",
+                current=current,
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        email = userinfo.get("email")
+        email_verified = bool(userinfo.get("email_verified"))
+        pool = get_pool()
+        try:
+            resolution = await resolve_google_identity(
+                pool,
+                google_sub=google_sub,
+                email=email,
+                email_verified=email_verified,
+                current=current,
+            )
+        except GoogleLinkConflict as exc:
+            return _oauth_error_page(
+                request,
+                message=str(exc),
+                current=current,
+                code=status.HTTP_409_CONFLICT,
+            )
+        # A brand-new Google account gets an auto-generated PROVISIONAL handle.
+        # Sign them in, then send them to the "choose your handle" step with the
+        # suggestion pre-filled and editable — nobody is forced to keep the
+        # placeholder. Existing accounts (link / returning / email-match) keep
+        # their handle and go straight to /account.
+        if resolution.is_new:
+            resp = RedirectResponse(
+                "/account/handle?new=1", status_code=status.HTTP_303_SEE_OTHER
+            )
+            _set_session_cookie(resp, resolution.user_id)
+            return resp
+        resp = RedirectResponse(
+            "/account", status_code=status.HTTP_303_SEE_OTHER
+        )
+        _set_session_cookie(resp, resolution.user_id)
+        resp.set_cookie(
+            "phishgame_flash",
+            "Signed in with Google.",
+            max_age=30,
+            httponly=True,
+            samesite="lax",
+            secure=cfg.cookie_secure,
+        )
+        return resp
+
+    @app.post("/logout")
+    async def logout(request: Request) -> Response:
+        """Clear the session identity cookie and return home. Idempotent."""
+        resp: Response = RedirectResponse(
+            "/", status_code=status.HTTP_303_SEE_OTHER
+        )
+        resp.delete_cookie(
+            COOKIE_NAME, samesite="lax", secure=cfg.cookie_secure
+        )
+        return resp
 
     # ----- Phase 4b: magic-link email auth ----------------------------------
 
@@ -2098,7 +2620,7 @@ def build_app(
             max_age=30,
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=cfg.cookie_secure,
         )
         return resp
 
@@ -2111,18 +2633,79 @@ def build_app(
         pool = get_pool()
         status_data = await get_email_status(pool, user.id)
         memberships = await list_user_leagues(pool, user.id)
+        async with pool.acquire() as conn:
+            google_sub = await conn.fetchval(
+                "SELECT google_sub FROM users WHERE id = $1", user.id
+            )
         flash = request.cookies.get("phishgame_flash")
         resp = _render(
             request,
             "account.html",
             current_user=user,
             status=status_data,
+            google_linked=google_sub is not None,
             flash=flash,
             leagues=memberships,
         )
         if flash:
             resp.delete_cookie("phishgame_flash")
         return resp
+
+    @app.get("/account/handle", response_class=HTMLResponse)
+    async def account_handle_form(
+        request: Request, new: int = Query(0)
+    ) -> Response:
+        """Form to choose / change your handle. Sign-in required.
+
+        ``?new=1`` (used right after a first-time Google sign-in) shows a
+        welcome prompt with the auto-suggested handle pre-filled and editable,
+        so nobody is stuck with the placeholder.
+        """
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        return _render(
+            request,
+            "account_handle.html",
+            current_user=user,
+            is_new=bool(new),
+            handle_help=HANDLE_HELP,
+        )
+
+    @app.post("/account/handle")
+    async def account_handle_submit(
+        request: Request, handle: str = Form(...)
+    ) -> Response:
+        user = await _resolve_user(request)
+        if user is None:
+            return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+        pool = get_pool()
+        try:
+            new_handle = await update_handle(pool, user.id, handle)
+        except HandleError as exc:
+            resp = _render(
+                request,
+                "account_handle.html",
+                current_user=user,
+                is_new=False,
+                handle_help=HANDLE_HELP,
+                error=str(exc),
+                attempted=handle,
+            )
+            resp.status_code = status.HTTP_400_BAD_REQUEST
+            return resp
+        redirect: Response = RedirectResponse(
+            "/account", status_code=status.HTTP_303_SEE_OTHER
+        )
+        redirect.set_cookie(
+            "phishgame_flash",
+            f"Handle updated to {new_handle}.",
+            max_age=30,
+            httponly=True,
+            samesite="lax",
+            secure=cfg.cookie_secure,
+        )
+        return redirect
 
     # ----- blog (deployment-specific content, mounted at BLOG_DIR) ----------
 
@@ -2195,7 +2778,7 @@ def build_app(
         try:
             from setlist_stash.resolve import latest_run_summary
             pool = get_pool()
-            latest = await latest_run_summary(pool)
+            latest = await latest_run_summary(pool, display_tz=cfg.display_tz)
             if latest is None:
                 body["resolver_last_run"] = None
                 body["resolver_last_status"] = None

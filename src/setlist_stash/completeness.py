@@ -22,18 +22,33 @@ Per-show poll bookkeeping lives in the durable ``poll_state`` table (migration
 005) so a resolver restart mid-show can't reset the stable-poll counter and
 re-arm a premature score.
 
-HARD PLATFORM DEPENDENCY (surfaced, not worked around): mcp-phish caches live
-hot-window ``get_show`` responses for ``CACHE_TTL_SECONDS`` (default 86400 =
-24h). For a show inside the 24h hot window the MCP reads phish.net live on the
-first poll but then serves that frozen partial snapshot for 24h, so every
-subsequent resolver poll sees the SAME track count. That makes a partial
-setlist look "stable" instantly and would falsely satisfy the stability clause.
-The resolver MUST keep reading via the MCP (every consumer reads via the MCP,
-never phish.net directly), so a genuine stability gate depends on a companion
-mcp-phish change to short-TTL or skip the cache for hot-window/today reads.
-Until that lands, the *backstop* is the real safety net: it fires regardless
-of cache state, so scoring still happens correctly (against the final
-setlist) once the backstop elapses. See the resolver summary / Forge handoff.
+PLATFORM DEPENDENCY (satisfied): the stability clause is only meaningful if
+each resolver poll can actually observe a NEW track count, and the resolver
+never talks to phish.net directly — every consumer reads through mcp-phish, so
+that upstream's cache policy decides whether polls see fresh data.
+
+mcp-phish splits its cache TTL by recency. Live reads of a show inside the hot
+window (``VAULT_HOT_WINDOW_HOURS``, 24h) use
+``HOT_WINDOW_CACHE_TTL_SECONDS`` — 90 seconds by default. The 24h
+``CACHE_TTL_SECONDS`` applies only to historical reads. Because the resolver's
+show-night cadence (``RESOLVER_ACTIVE_INTERVAL_SECONDS``, 300s) is well longer
+than that 90s TTL, every active-window poll gets a genuinely fresh phish.net
+read and a real track count. A partial setlist therefore looks partial, not
+falsely "stable".
+
+This was NOT always true. An earlier mcp-phish applied the flat 24h TTL to
+hot-window reads too, which froze the first partial snapshot for the whole
+show and would have satisfied the stability clause instantly. Back then the
+time backstop was the only real safety net. It no longer is: the stability
+clause is now the working happy path, and the backstop is what it was always
+meant to be — the fallback for a setlist whose track count never settles
+(phish.net edits trickling for days, an unusual encore label, etc.).
+
+If you point this resolver at an MCP without a short hot-window TTL, the
+stability clause silently degrades back to "first partial snapshot wins" and
+the backstop becomes load-bearing again. Verify with
+``load_settings().hot_window_cache_ttl_seconds`` on the upstream before
+tightening ``stable_polls`` or shortening the backstop.
 """
 
 from __future__ import annotations

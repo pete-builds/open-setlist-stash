@@ -12,13 +12,13 @@
       </p>
       {% if lock %}
         <p class="muted">Lock: <strong>{{ lock.lock_at_display }}</strong>
-          ({{ lock.seconds_until_lock }}s from now).</p>
+          ({{ lock.countdown_human }} from now).</p>
       {% endif %}
       {% if entrant_count %}
         <p class="muted">🎸 <strong>{{ entrant_count }}</strong> player{% if entrant_count != 1 %}s{% endif %} in so far.</p>
       {% endif %}
       <p>
-        <a class="btn" href="/predict/{{ show_date }}">Predict form</a>
+        <a class="btn" href="/predict/{{ show_date }}">Make Your Picks</a>
         <button type="button" class="btn" id="share-btn"
                 data-share-url="/predict/{{ show_date }}"
                 data-share-title="Make your picks: {{ show_date }}"
@@ -47,7 +47,12 @@
       <p class="muted">Lock: <strong>{{ lock.lock_at_display }}</strong>{% if resolved %} &middot; final{% elif any_scored %} &middot; scoring live{% else %} &middot; awaiting setlist{% endif %}.</p>
     {% endif %}
 
-    {# Live setlist — fills in set by set as songs come in, beside the standings. #}
+    {# Live setlist — fills in set by set as songs come in, beside the standings.
+       Songs still carry an `advisory` flag from `_group_setlist` (provenance
+       "x" or an explicit advisory=true out of the MCP). It is deliberately NOT
+       rendered: the legend explaining it was removed, so an unexplained tag on
+       a song was worse than no tag. The flag stays on the context so it can be
+       re-surfaced without touching the ingestion or grouping layers. #}
     <section class="setlist" aria-label="Setlist">
       <h2>Setlist{% if not resolved %} <span class="muted setlist-live">live</span>{% endif %}</h2>
       {% if setlist_groups %}
@@ -56,12 +61,11 @@
             <h3 class="setlist-set-name">{{ grp.set_name }}</h3>
             <p class="setlist-songs">
               {%- for song in grp.songs -%}
-                <span class="setlist-song{% if song.advisory %} setlist-song--advisory{% endif %}"{% if song.advisory %} title="Unconfirmed (via X) — may be revised"{% endif %}>{{ song.song_title }}{% if song.advisory %} <span class="setlist-tag">via X</span>{% endif %}</span>{%- if song.transition -%}<span class="setlist-trans"> {{ song.transition }} </span>{%- elif not loop.last -%}<span class="setlist-trans">, </span>{%- endif -%}
+                <span class="setlist-song">{{ song.song_title }}</span>{%- if song.transition -%}<span class="setlist-trans"> {{ song.transition }} </span>{%- elif not loop.last -%}<span class="setlist-trans">, </span>{%- endif -%}
               {%- endfor -%}
             </p>
           </div>
         {% endfor %}
-        <p class="muted setlist-note">Songs appear as they're played. <span class="setlist-tag">via X</span> marks unconfirmed early reports that get superseded once the official source posts.</p>
       {% else %}
         <p class="muted">Setlist not posted yet. It'll fill in here as songs come in.</p>
       {% endif %}
@@ -108,8 +112,15 @@
     {% endif %}
 
     <p class="muted" style="margin-top:1rem;">
-      <a href="/predict/{{ show_date }}">Predict form</a> &middot;
+      <a href="/predict/{{ show_date }}">Make Your Picks</a> &middot;
       <a href="/show/{{ show_date }}/assist">Post-lock assist</a>
     </p>
+  {% endif %}
+
+  {# Per-show comment thread. Sits under the leaderboard/predictions and renders
+     in every lock state (people talk about a show before and after it plays).
+     Gated on the enable_comments deployment flag. #}
+  {% if enable_comments %}
+    {% include "_comments.html" %}
   {% endif %}
 {% endblock %}

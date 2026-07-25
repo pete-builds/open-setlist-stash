@@ -37,6 +37,7 @@ All branding is deployment-specific (config + mounted assets), so the public rep
   - *Bundle it (good for forks):* drop a file in `src/setlist_stash/static/themes/your-theme.css`, set `THEME_FILE=themes/your-theme.css`, rebuild.
   - *Keep it private (good if the branding is yours):* mount the CSS at runtime via `docker-compose.override.yml` (see `docker-compose.override.yml.example`). The CSS lives outside the repo on the host; compose merges the override on `up`.
 - **Email signup** is gated on `EMAIL_PROVIDER`: with it `disabled` (the default), the magic-link UI is hidden and players join with an anonymous handle + cookie. Set a real provider to enable email magic-link auth.
+- **Google sign-in (SSO)** is gated on `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`: with both blank (the default) no Google buttons render and the `/auth/google/*` routes redirect home. Provision a Google OAuth "Web application" client, set the two env vars, point `BASE_URL` at your public origin (the redirect URI is `{BASE_URL}/auth/google/callback`), and set `COOKIE_SECURE=true` on HTTPS. Signing in with Google while already holding a handle cookie links Google to that same account, so existing players keep their handle, picks, and games. See `.env.example` for the full setup notes.
 
 ### Blog (optional)
 

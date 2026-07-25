@@ -7,7 +7,8 @@
   {% endif %}
 
   <div class="card">
-    <p>Handle: <strong>{{ current_user.handle }}</strong></p>
+    <p>Handle: <strong>{{ current_user.handle }}</strong>
+       <a class="btn" href="/account/handle">Change handle</a></p>
     {% if email_enabled %}
       {% if status.verified %}
         <p>Email: <strong>{{ status.masked }}</strong> <span class="me-tag">verified</span></p>
@@ -32,6 +33,21 @@
         Your handle is anonymous-only. Keep playing from this browser; your
         picks and games stay tied to this handle.
       </p>
+    {% endif %}
+
+    {% if google_oauth_enabled %}
+      {% if google_linked %}
+        <p>Google: <span class="me-tag">linked</span></p>
+        <p class="muted">
+          You can sign in from any browser with "Sign in with Google".
+        </p>
+      {% else %}
+        <p>Google: <em>not linked</em></p>
+        <p><a class="btn" href="/auth/google/start">Link Google</a></p>
+        <p class="muted">
+          Link your Google account to carry this handle across devices.
+        </p>
+      {% endif %}
     {% endif %}
   </div>
 

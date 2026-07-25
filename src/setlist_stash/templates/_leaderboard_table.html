@@ -48,7 +48,7 @@
             <td><a href="/u/{{ row.handle }}">{{ row.handle }}</a>{% if current_user and current_user.handle == row.handle %} <span class="me-tag">you</span>{% endif %}</td>
             <td class="num">{{ row.total_score }}</td>
             <td class="num">{{ row.shows_played }}</td>
-            <td class="muted">{{ row.refreshed_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+            <td class="muted">{{ row.refreshed_at|display_dt('%Y-%m-%d %-I:%M %p %Z') }}</td>
           </tr>
         {% endfor %}
       </tbody>

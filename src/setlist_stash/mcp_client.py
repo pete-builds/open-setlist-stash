@@ -246,6 +246,25 @@ class McpPhishClient:
             raise McpPhishError(f"get_show: unexpected shape {type(row).__name__}")
         return row
 
+    async def search_shows(
+        self, *, year: int, limit: int = 60
+    ) -> list[dict[str, Any]]:
+        """Shows for a given year (played + announced-future), newest first.
+
+        Returns flat dicts: ``show_id``, ``date``, ``venue_name``,
+        ``location``, ``tour_name``. Used by the ``/shows`` archive to resolve
+        venue titles for the whole tour in a single call, instead of a
+        date-DESC ``recent_shows`` window that misses the earliest dates.
+        """
+        result = await self._call_tool(
+            "search_shows", {"year": year, "limit": limit}
+        )
+        if isinstance(result, list):
+            return result
+        raise McpPhishError(
+            f"search_shows: unexpected shape {type(result).__name__}"
+        )
+
     async def songs_by_gap(self, limit: int = 25) -> list[dict[str, Any]]:
         """Top-N songs ordered by current gap (descending).
 
