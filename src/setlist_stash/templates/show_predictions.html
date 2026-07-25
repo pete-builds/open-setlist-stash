@@ -47,7 +47,12 @@
       <p class="muted">Lock: <strong>{{ lock.lock_at_display }}</strong>{% if resolved %} &middot; final{% elif any_scored %} &middot; scoring live{% else %} &middot; awaiting setlist{% endif %}.</p>
     {% endif %}
 
-    {# Live setlist — fills in set by set as songs come in, beside the standings. #}
+    {# Live setlist — fills in set by set as songs come in, beside the standings.
+       Songs still carry an `advisory` flag from `_group_setlist` (provenance
+       "x" or an explicit advisory=true out of the MCP). It is deliberately NOT
+       rendered: the legend explaining it was removed, so an unexplained tag on
+       a song was worse than no tag. The flag stays on the context so it can be
+       re-surfaced without touching the ingestion or grouping layers. #}
     <section class="setlist" aria-label="Setlist">
       <h2>Setlist{% if not resolved %} <span class="muted setlist-live">live</span>{% endif %}</h2>
       {% if setlist_groups %}
@@ -56,7 +61,7 @@
             <h3 class="setlist-set-name">{{ grp.set_name }}</h3>
             <p class="setlist-songs">
               {%- for song in grp.songs -%}
-                <span class="setlist-song{% if song.advisory %} setlist-song--advisory{% endif %}"{% if song.advisory %} title="Unconfirmed (via X) — may be revised"{% endif %}>{{ song.song_title }}{% if song.advisory %} <span class="setlist-tag">via X</span>{% endif %}</span>{%- if song.transition -%}<span class="setlist-trans"> {{ song.transition }} </span>{%- elif not loop.last -%}<span class="setlist-trans">, </span>{%- endif -%}
+                <span class="setlist-song">{{ song.song_title }}</span>{%- if song.transition -%}<span class="setlist-trans"> {{ song.transition }} </span>{%- elif not loop.last -%}<span class="setlist-trans">, </span>{%- endif -%}
               {%- endfor -%}
             </p>
           </div>
