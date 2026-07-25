@@ -524,8 +524,15 @@ async def test_list_show_entrants_all_zero_in_submit_order(pg_pool: Any) -> None
 @pytest.mark.asyncio
 @requires_pg
 async def test_list_show_entrants_empty_for_unknown_show(pg_pool: Any) -> None:
+    """A show nobody entered lists no entrants.
+
+    Previously this also asserted ``"2024-spring" in list_scope_keys(pool,
+    "tour")``. That assertion was orphaned: the test seeds no predictions and
+    the ``pg_pool`` fixture truncates ``leaderboard_snapshots`` before every
+    test, so no tour scope key can exist here and it could never pass. Tour
+    scope keys are covered properly by
+    ``test_rebuild_season_buckets_by_meteorological_season``, which seeds two
+    seasons and calls ``rebuild_season`` before asserting.
+    """
     rows = await list_show_entrants(pg_pool, date(2024, 8, 4), limit=50)
     assert rows == []
-
-    season_keys = await list_scope_keys(pg_pool, "tour")
-    assert "2024-spring" in season_keys

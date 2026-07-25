@@ -29,15 +29,69 @@ Route-test gotcha (fixed in build session 7):
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncIterator
 from typing import Any
 
 import asyncpg
+import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+
+MCP_URL = "http://mcp-phish:3705/mcp"
+
+
+def mcp_validate_slugs_ok(valid: list[str]) -> list[httpx.Response]:
+    """respx ``side_effect`` list for one successful slug-validation round-trip.
+
+    ``POST /predict/<date>`` validates every submitted slug against mcp-phish
+    *before* it looks at anything else, so any route test that posts picks has
+    to mock the MCP or it gets a 503 and never reaches the behaviour under
+    test. The sequence is the FastMCP Streamable-HTTP handshake (initialize ->
+    session id -> notifications/initialized) followed by a single batch
+    ``validate_song_slugs`` tools/call.
+    """
+    return [
+        httpx.Response(
+            200,
+            headers={
+                "content-type": "application/json",
+                "mcp-session-id": "test-session",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": "1",
+                "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "serverInfo": {"name": "phish-mcp", "version": "0.1"},
+                },
+            },
+        ),
+        httpx.Response(202, json={"jsonrpc": "2.0", "result": {}}),
+        httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={
+                "jsonrpc": "2.0",
+                "id": "abc",
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {"data": {"valid": valid, "unknown": []}}
+                            ),
+                        }
+                    ],
+                    "isError": False,
+                },
+            },
+        ),
+    ]
 
 
 def _test_pg_dsn() -> str | None:
@@ -55,6 +109,7 @@ async def pg_pool() -> AsyncIterator[asyncpg.Pool[Any] | None]:
         raise RuntimeError("asyncpg.create_pool returned None")
     # Ensure schema is present. We import the migrate module from the
     # package and run it. Tests run in development; safe.
+    from setlist_stash import db as db_module
     from setlist_stash.migrate import run_migrations
     await run_migrations(pool)
     # Truncate game tables before each test for a clean slate. We don't
@@ -66,9 +121,18 @@ async def pg_pool() -> AsyncIterator[asyncpg.Pool[Any] | None]:
             "comments, users, leaderboard_snapshots, scoring_runs "
             "RESTART IDENTITY CASCADE"
         )
+    # ``build_app_with_pool`` publishes the pool to ``db._pool``, a module
+    # global that nothing else resets. Without restoring it here, the FIRST
+    # DB-backed test leaves a *closed* pool installed for the rest of the
+    # session: later tests that expect the no-pool path (``get_pool()`` raising
+    # RuntimeError, which routes degrade on) instead reach a dead pool and get
+    # ``InterfaceError: pool is closed``. Snapshot and restore so each test
+    # starts from the same global state it would see running alone.
+    previous_pool = db_module._pool  # type: ignore[attr-defined]
     try:
         yield pool
     finally:
+        db_module._pool = previous_pool  # type: ignore[attr-defined]
         await pool.close()
 
 

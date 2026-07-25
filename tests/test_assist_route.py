@@ -255,8 +255,16 @@ async def test_predictions_post_lock_lists_picks_no_score(
     assert "predictions hidden until lock" not in body_lower
     assert "phan_two" in body
     assert "tweezer" in body
-    # Awaiting-resolver footer should be present.
-    assert "awaiting resolver" in body_lower
+    # Post-lock, unresolved, nothing scored yet: the lock line reports what is
+    # actually being waited on. This used to read "awaiting resolver" (added in
+    # aade58f); 2df1591 replaced that footer with a three-state lock line
+    # (final / scoring live / awaiting setlist) and the test was never updated.
+    # The template wording is the correct side: "resolver" is the name of an
+    # internal cron the reader has no concept of, whereas "awaiting setlist"
+    # names the thing they're waiting for and matches the adjacent empty state
+    # ("Setlist not posted yet").
+    assert "awaiting setlist" in body_lower
+    assert "final" not in body_lower
 
 
 @requires_pg
@@ -311,4 +319,8 @@ async def test_predictions_post_resolve_shows_score(
     assert "phan_three" in body
     assert ">Score<" in body or ">score<" in body_lower  # column header
     assert "47" in body
-    assert "awaiting resolver" not in body_lower
+    # Resolved: the lock line flips to "final". Asserting the absence of the
+    # long-dead "awaiting resolver" string was vacuously true, so assert the
+    # live copy instead: "final" present, "awaiting setlist" gone.
+    assert "final" in body_lower
+    assert "awaiting setlist" not in body_lower

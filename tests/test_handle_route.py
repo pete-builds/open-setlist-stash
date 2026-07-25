@@ -19,11 +19,12 @@ from typing import Any
 
 import asyncpg
 import pytest
+import respx
 from httpx import AsyncClient
 
 from setlist_stash.auth import sign_user_id
 from setlist_stash.config import get_settings
-from tests.conftest import requires_pg
+from tests.conftest import MCP_URL, mcp_validate_slugs_ok, requires_pg
 
 
 @requires_pg
@@ -66,24 +67,39 @@ async def test_post_handle_rejects_bad_format(
 
 
 @requires_pg
+@respx.mock
 async def test_locked_show_rejects_submission(
     pg_pool: asyncpg.Pool[Any] | None,
     async_client: AsyncClient,
 ) -> None:
     """If lock_at is in the past, the form returns 409 and the trigger blocks
     direct DB inserts as a backstop.
+
+    mcp-phish is mocked because ``POST /predict`` validates slugs before it
+    checks the lock, so an unmocked MCP returns 503 and the 409 path is never
+    reached. The mock reports every submitted slug valid, which is what makes
+    the 409 meaningful: the submission is rejected for being late, not for
+    being malformed.
     """
     assert pg_pool is not None
     show_date = date.today()
     past_lock = datetime.now(UTC) - timedelta(hours=1)
 
-    # Pre-create a locked-prediction-locks row (operator override path).
+    # Pre-create a locked prediction_locks row via the operator-override path.
+    # ``lock_at_override`` is the column that actually pins the lock: POST
+    # /predict calls get_or_create_lock, whose upsert deliberately REFRESHES a
+    # bare ``lock_at`` from the freshly computed venue-local default (so a
+    # location/timezone correction propagates) and only leaves it alone when an
+    # override is set. Writing just ``lock_at`` here therefore got recomputed to
+    # today's 22:00 ET, which is in the future, and the show read as unlocked.
     async with pg_pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO prediction_locks (show_date, lock_at)
-            VALUES ($1, $2)
-            ON CONFLICT (show_date) DO UPDATE SET lock_at = EXCLUDED.lock_at
+            INSERT INTO prediction_locks (show_date, lock_at, lock_at_override)
+            VALUES ($1, $2, $2)
+            ON CONFLICT (show_date) DO UPDATE
+                SET lock_at = EXCLUDED.lock_at,
+                    lock_at_override = EXCLUDED.lock_at_override
             """,
             show_date,
             past_lock,
@@ -107,6 +123,11 @@ async def test_locked_show_rejects_submission(
                 user_id,
                 show_date,
             )
+
+    # Picks are alphabetized by normalize_picks before validation.
+    respx.post(MCP_URL).side_effect = mcp_validate_slugs_ok(
+        valid=["fluffhead", "harry-hood", "tweezer"]
+    )
 
     # The HTTP route returns 409 when the user posts after lock.
     async_client.cookies.set(
