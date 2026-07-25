@@ -90,7 +90,7 @@ async def main() -> None:
                     gs = await mcp.get_show(d)
                     venue = gs.get("venue") or {}
                     location = str(venue.get("location") or "")
-                except Exception:  # noqa: BLE001 — best-effort; tz falls back
+                except Exception:  # best-effort; tz falls back
                     location = ""
             show_id = str(row.get("show_id")) if row.get("show_id") else None
             venue_tz = resolve_venue_tz(location, settings.default_lock_tz)
@@ -104,7 +104,7 @@ async def main() -> None:
     inserted = skipped = purged = 0
     try:
         async with pool.acquire() as conn:
-            for dd, show_id, lock_at, venue_tz, venue_name, tour in targets:
+            for dd, show_id, lock_at, venue_tz, venue_name, _tour in targets:
                 if args.dry_run:
                     log.info(
                         "would seed %s show_id=%s lock_at=%s tz=%s venue=%r",
