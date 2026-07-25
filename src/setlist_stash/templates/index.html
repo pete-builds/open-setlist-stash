@@ -16,7 +16,7 @@
      (see LIVE_SHOW_WINDOW_HOURS in server.py) rather than one still upcoming:
      the heading, the status line, the entrant line and the CTA all switch
      together. #}
-  {% set on_now = live_show and upcoming_show and live_show.show_date == upcoming_show.show_date %}
+  {% set on_now = card_state == 'live' %}
 
   {% if upcoming_show and upcoming_lock %}
     <div class="next-show{% if on_now %} next-show--live{% endif %}" id="next-show">
@@ -24,6 +24,8 @@
         {% if on_now %}
           <span class="live-dot" aria-hidden="true"></span>
           <span class="live-label">On stage now</span> &middot;
+        {% elif card_state == 'over' %}
+          Last show:
         {% else %}
           Next show:
         {% endif %}
@@ -32,8 +34,9 @@
       </p>
       {% if on_now %}
         <p class="next-show-lock">Picks are locked. Scores are climbing as songs get played.</p>
-      {% elif upcoming_lock.is_locked %}
-        <p class="next-show-lock">Picks locked &middot; scoring live</p>
+      {% elif card_state == 'over' %}
+        {# Only reachable at the end of a run: locked, finished, nothing next. #}
+        <p class="next-show-lock">Final &middot; no upcoming dates announced</p>
       {% else %}
         <p class="next-show-lock">
           Picks lock <strong>{{ upcoming_lock.lock_at_display }}</strong>
@@ -44,6 +47,7 @@
         <p class="next-show-players">
           🎸 <strong>{{ entrant_count }}</strong> player{% if entrant_count != 1 %}s{% endif %}
           {%- if on_now %} in the running tonight
+          {%- elif card_state == 'over' %} played this one
           {%- else %} in for {{ upcoming_show.venue_name or upcoming_show.location or upcoming_show.show_date }}
           {%- endif %}
         </p>
@@ -87,10 +91,17 @@
         {% if enable_games %}
         <p><a class="btn" href="/leagues">Your games</a></p>
         {% endif %}
-      {% elif upcoming_show %}
+      {% elif card_state == 'pre_lock' and upcoming_show %}
         <p>
           <a class="btn btn-primary btn-lg" href="/predict/{{ upcoming_show.show_date }}">🎸 Make your picks</a>
         </p>
+        {% if enable_games %}
+        <p><a class="btn" href="/leagues">Your games</a></p>
+        {% endif %}
+      {% elif card_state == 'over' %}
+        {# Locked, finished, and nothing further announced (end of tour). Never
+           link the pick sheet here: it can no longer be submitted to. #}
+        <p class="muted">That's a wrap on this run. Next dates aren't posted yet.</p>
         {% if enable_games %}
         <p><a class="btn" href="/leagues">Your games</a></p>
         {% endif %}

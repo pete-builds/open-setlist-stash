@@ -104,6 +104,7 @@ from setlist_stash.locks import (
     get_or_create_lock,
     read_lock,
     select_form_show,
+    select_next_show,
 )
 from setlist_stash.logging_setup import configure_logging
 from setlist_stash.mcp_client import McpPhishClient, McpPhishError
@@ -233,6 +234,35 @@ def _humanize_countdown(seconds: int) -> str:
     if hours > 0:
         return f"{hours}h {minutes}m"
     return f"{minutes}m"
+
+
+def home_card_state(
+    *,
+    upcoming_date: date | None,
+    live_date: date | None,
+    is_locked: bool,
+) -> str:
+    """Which of four states the home page's show card is in.
+
+    - ``"no_show"``  nothing announced on the board.
+    - ``"live"``     the target show is the one being played right now.
+    - ``"over"``     the target show is locked and NOT being played, i.e. it
+      has finished. ``select_form_show`` is date-only, so it keeps returning
+      tonight's show until midnight Eastern; without this state the card would
+      spend the rest of the night calling a finished show "Next show" and
+      offering a pick sheet that can no longer be submitted to.
+    - ``"pre_lock"`` picks are open.
+
+    Order matters: ``live`` is checked before ``over`` because a show in
+    progress is also locked.
+    """
+    if upcoming_date is None:
+        return "no_show"
+    if live_date is not None and live_date == upcoming_date:
+        return "live"
+    if is_locked:
+        return "over"
+    return "pre_lock"
 
 
 def display_now(settings: Settings) -> datetime:
@@ -582,6 +612,8 @@ def build_app(
         # every landing-page hit and independent of upstream availability.
         live_show: dict[str, Any] | None = None
         recent_show: dict[str, Any] | None = None
+        live_date: date | None = None
+        recent_date: date | None = None
         try:
             live_date, recent_date = await home_show_pointers(get_pool())
             if live_date is not None:
@@ -590,9 +622,25 @@ def build_app(
                 recent_show = {"show_date": recent_date, "venue": None}
         except RuntimeError:
             pass
+        # Lock display state + entrant count for a show. Lazily creates the
+        # prediction_locks row (that is how a show first joins the board).
+        # ``(None, 0)`` when the pool isn't up, so the page still renders.
+        async def _lock_context(show: Any) -> tuple[dict[str, Any] | None, int]:
+            try:
+                pool = get_pool()
+            except RuntimeError:
+                return None, 0
+            lock = await get_or_create_lock(pool, show, cfg)
+            # Entrant count is a count only (no picks revealed), so it is fair
+            # to show pre-lock.
+            return _format_lock(lock, cfg), await count_entrants(pool, show.show_date)
+
         # Resolve the upcoming show for everyone (not just signed-in users) so
         # the home-page countdown widget renders for anonymous visitors too.
         upcoming = None
+        upcoming_lock: dict[str, Any] | None = None
+        entrant_count = 0
+        card_state = "no_show"
         try:
             async with McpPhishClient(
                 cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
@@ -611,24 +659,36 @@ def build_app(
                     venue = meta.get("venue") or {}
                     if isinstance(venue, dict):
                         card["venue"] = venue.get("name") or venue.get("location")
+                if upcoming is not None:
+                    upcoming_lock, entrant_count = await _lock_context(upcoming)
+                    card_state = home_card_state(
+                        upcoming_date=upcoming.show_date,
+                        live_date=live_date,
+                        is_locked=bool(upcoming_lock and upcoming_lock["is_locked"]),
+                    )
+                    # The target show is locked and not being played, so it is
+                    # over. select_form_show is date-only and would keep
+                    # returning it until midnight Eastern; advance the board to
+                    # the next announced show instead. If nothing follows (end
+                    # of tour) we keep what we have and the template suppresses
+                    # the picks CTA rather than linking a locked sheet.
+                    if card_state == "over":
+                        nxt = await select_next_show(
+                            cfg, mcp, after=upcoming.show_date
+                        )
+                        if nxt is not None:
+                            upcoming = nxt
+                            upcoming_lock, entrant_count = await _lock_context(nxt)
+                            card_state = home_card_state(
+                                upcoming_date=nxt.show_date,
+                                live_date=live_date,
+                                is_locked=bool(
+                                    upcoming_lock and upcoming_lock["is_locked"]
+                                ),
+                            )
         except McpPhishError:
             logger.warning("mcp-phish unreachable on /; rendering without show")
             upcoming = None
-        # Lock for the upcoming show, so the hero countdown has a target. Same
-        # _format_lock shape the predict page consumes (lock_at_iso + display +
-        # is_locked). Needs the DB pool; skip gracefully if it isn't up.
-        upcoming_lock = None
-        entrant_count = 0
-        if upcoming is not None:
-            try:
-                pool = get_pool()
-                lock = await get_or_create_lock(pool, upcoming, cfg)
-                upcoming_lock = _format_lock(lock, cfg)
-                # How many players are in for the upcoming show. Count only
-                # (no picks revealed), so it's fair to show pre-lock.
-                entrant_count = await count_entrants(pool, upcoming.show_date)
-            except RuntimeError:
-                upcoming_lock = None
         return _render(
             request,
             "index.html",
@@ -639,6 +699,7 @@ def build_app(
             entrant_count=entrant_count,
             live_show=live_show,
             recent_show=recent_show,
+            card_state=card_state,
         )
 
     def _safe_next(raw: str) -> str:

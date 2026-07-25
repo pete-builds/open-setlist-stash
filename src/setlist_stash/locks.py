@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -288,6 +288,11 @@ async def select_form_show(
     "Today" is evaluated in ``DISPLAY_TZ`` (Eastern), never in the container's
     zone. Containers run ``TZ=UTC``, where ``date.today()`` flips to tomorrow
     at 8pm Eastern — so a show would stop being "today's show" mid-set.
+
+    Deliberately date-only: it does NOT skip a show whose lock has passed. That
+    keeps tonight's show as "the show" for the whole evening, which is what the
+    live home-page card is built on. Callers that need the next *pickable* show
+    once tonight's is over use :func:`select_next_show`.
     """
     today = datetime.now(tz=ZoneInfo(settings.display_tz)).date()
 
@@ -301,25 +306,67 @@ async def select_form_show(
             tour_name=None,
         )
 
-    # Cover a tour that straddles a year boundary (summer run into next-year
-    # Mexico, etc.) so we never miss the true nearest date.
-    candidates: list[tuple[date, dict[str, Any]]] = []
     try:
-        for yr in (today.year, today.year + 1):
-            for row in await mcp.search_shows(year=yr, limit=200):
-                try:
-                    d = date.fromisoformat(str(row["date"]))
-                except (KeyError, ValueError):
-                    continue
-                if d >= today:
-                    candidates.append((d, row))
+        candidates = await _shows_on_or_after(mcp, since=today)
     except Exception:
         logger.exception("search_shows lookup failed")
         return None
-
     if not candidates:
         return None
-    d, row = min(candidates, key=lambda pair: pair[0])
+    d, row = candidates[0]
+    return _to_show_target(d, row)
+
+
+async def select_next_show(
+    settings: Settings, mcp: McpPhishClient, *, after: date
+) -> ShowTarget | None:
+    """The nearest announced show STRICTLY after ``after``.
+
+    Used when the board's current target show is locked and finished: the home
+    page advances to the next one rather than advertising a pick sheet nobody
+    can submit to. Returns None when nothing further is announced (end of tour),
+    and the caller keeps whatever it had.
+
+    ``ADMIN_SHOW_DATE`` is intentionally not honored here. That override pins
+    the *form* target; this is a "what comes next" lookup, and letting the pin
+    answer it would loop the board back onto the same show forever.
+    """
+    _ = settings  # signature symmetry with select_form_show; reserved
+    try:
+        candidates = await _shows_on_or_after(mcp, since=after + timedelta(days=1))
+    except Exception:
+        logger.exception("search_shows lookup failed")
+        return None
+    if not candidates:
+        return None
+    d, row = candidates[0]
+    return _to_show_target(d, row)
+
+
+async def _shows_on_or_after(
+    mcp: McpPhishClient, *, since: date
+) -> list[tuple[date, dict[str, Any]]]:
+    """Every announced show dated on or after ``since``, ascending.
+
+    Scans ``since``'s year plus the next one so a tour that straddles a year
+    boundary (a summer run into a next-year Mexico date) still surfaces the
+    true nearest show. Rows with a missing or unparseable date are skipped
+    rather than raising: one bad upstream row must not blank the board.
+    """
+    out: list[tuple[date, dict[str, Any]]] = []
+    for yr in (since.year, since.year + 1):
+        for row in await mcp.search_shows(year=yr, limit=200):
+            try:
+                d = date.fromisoformat(str(row["date"]))
+            except (KeyError, ValueError):
+                continue
+            if d >= since:
+                out.append((d, row))
+    out.sort(key=lambda pair: pair[0])
+    return out
+
+
+def _to_show_target(d: date, row: dict[str, Any]) -> ShowTarget:
     return ShowTarget(
         show_date=d,
         show_id=str(row.get("show_id")) if row.get("show_id") else None,
