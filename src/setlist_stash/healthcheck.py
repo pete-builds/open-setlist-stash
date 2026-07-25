@@ -17,7 +17,7 @@ def main() -> int:
     cfg = get_settings()
     url = f"http://127.0.0.1:{cfg.app_port}/healthz"
     try:
-        with urllib.request.urlopen(url, timeout=3) as resp:  # noqa: S310 (loopback only)
+        with urllib.request.urlopen(url, timeout=3) as resp:  # loopback only
             return 0 if resp.status == 200 else 1
     except (urllib.error.URLError, TimeoutError, OSError):
         return 1
