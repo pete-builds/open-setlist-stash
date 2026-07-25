@@ -1280,6 +1280,48 @@ table.stat-table tbody tr:last-child td { border-bottom: 0; }
   margin: 0.6rem 0 0;
 }
 
+/* Showtime-only "Live now" button + its venue caption. Uses theme vars only,
+   so the Wappy denim theme inherits it without an override. The pulsing dot
+   is the only signal that this button is different from the other CTAs. */
+.live-now {
+  margin: 0.4rem 0 0.3rem;
+}
+.live-now-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.live-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--error);
+  box-shadow: 0 0 0 0 var(--error);
+  animation: live-pulse 1.8s ease-out infinite;
+}
+@keyframes live-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(158, 34, 34, 0.55); }
+  70%  { box-shadow: 0 0 0 0.5rem rgba(158, 34, 34, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(158, 34, 34, 0); }
+}
+/* Respect reduced-motion: keep the dot, drop the pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .live-dot { animation: none; }
+}
+.live-now-where {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+}
+
+/* Morning-after "last show's setlist" link, sits under the picks CTA. */
+.recent-show {
+  margin: 0.2rem 0 1.2rem;
+}
+.recent-show-btn {
+  font-size: 0.95rem;
+}
+
 /* Signed-in welcome card, full width of the shared home column. */
 .home-welcome {
   margin: 0.5rem 0 1.2rem;

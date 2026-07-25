@@ -25,10 +25,13 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import markdown
+
+from setlist_stash.config import get_settings
 
 logger = logging.getLogger("setlist_stash.blog")
 
@@ -86,7 +89,12 @@ def _parse_date(raw: str | None, fallback_mtime: float) -> date:
             return date.fromisoformat(raw.strip())
         except ValueError:
             logger.warning("blog: bad frontmatter date %r; using mtime", raw)
-    return datetime.fromtimestamp(fallback_mtime, tz=UTC).date()
+    # Fallback publication date for a post with no/invalid frontmatter date.
+    # Resolve the file mtime in DISPLAY_TZ (Eastern), not UTC: a post saved at
+    # 9pm Eastern would otherwise be dated tomorrow on a UTC container.
+    return datetime.fromtimestamp(
+        fallback_mtime, tz=ZoneInfo(get_settings().display_tz)
+    ).date()
 
 
 def _render(md_body: str) -> str:

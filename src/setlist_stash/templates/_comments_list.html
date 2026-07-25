@@ -15,7 +15,7 @@
       <li class="comment" id="comment-{{ c.id }}">
         <div class="comment-head">
           <a class="comment-handle" href="/u/{{ c.handle }}">{{ c.handle }}</a>
-          <span class="comment-time muted">{{ c.created_at.strftime('%b %-d, %-I:%M %p UTC') }}</span>
+          <span class="comment-time muted">{{ c.created_at|display_dt }}</span>
           {% if current_user and current_user.id == c.user_id %}
             <button type="button" class="comment-delete link-btn"
                     hx-post="/comment/{{ c.id }}/delete"

@@ -34,6 +34,24 @@
     </div>
   {% endif %}
 
+  {# Showtime-only entry point. Rendered while a show is locked, unfinalized
+     and still inside the live window (see LIVE_SHOW_WINDOW_HOURS in
+     server.py), so the band is on stage and the setlist page is filling in
+     song by song. Sits above the picks CTA because during a show, watching
+     beats picking. #}
+  {% if live_show %}
+    <p class="live-now">
+      <a class="btn btn-primary btn-lg live-now-btn"
+         href="/show/{{ live_show.show_date }}/predictions">
+        <span class="live-dot" aria-hidden="true"></span>
+        Live now: watch the setlist
+      </a>
+    </p>
+    {% if live_show.venue %}
+      <p class="live-now-where muted">{{ live_show.venue }} &middot; {{ live_show.show_date.strftime('%a %b %-d') }}</p>
+    {% endif %}
+  {% endif %}
+
   {% if current_user %}
     {# Signed-in players already have a handle: their single CTA is jumping
        straight to the pick sheet for the upcoming show. #}
@@ -82,6 +100,19 @@
       <a href="/auth/login">Sign in by email</a>.
     </p>
     {% endif %}
+  {% endif %}
+
+  {# Morning-after entry point, directly under the picks CTA. Once a show ends
+     the first thing people want is last night's setlist, so link the most
+     recently played show straight to its setlist + standings page. Hidden when
+     that show is the one currently playing (the live button above owns it). #}
+  {% if recent_show %}
+    <p class="recent-show">
+      <a class="btn recent-show-btn" href="/show/{{ recent_show.show_date }}/predictions">
+        🎶 Last show's setlist &middot;
+        {% if recent_show.venue %}{{ recent_show.venue }}, {% endif %}{{ recent_show.show_date.strftime('%a %b %-d') }}
+      </a>
+    </p>
   {% endif %}
 
   {% if beta_notice %}

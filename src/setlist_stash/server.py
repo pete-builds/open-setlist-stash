@@ -20,11 +20,13 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, datetime
+from functools import partial
 from html import escape
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import asyncpg
 import uvicorn
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import FastAPI, Form, Query, Request, status
@@ -233,6 +235,101 @@ def _humanize_countdown(seconds: int) -> str:
     return f"{minutes}m"
 
 
+def display_now(settings: Settings) -> datetime:
+    """Wallclock "now" in the viewer-facing display zone.
+
+    Every user-facing date boundary ("is this show today?", "which show played
+    last night?") must be evaluated here, not in UTC. Containers run with
+    ``TZ=UTC``, so a bare ``date.today()`` rolls over to tomorrow at 8pm
+    Eastern — mid-show, which is exactly when it matters most.
+    """
+    return datetime.now(tz=ZoneInfo(settings.display_tz))
+
+
+def display_dt(
+    value: Any,
+    fmt: str = "%b %-d, %-I:%M %p %Z",
+    *,
+    tz: str = "America/New_York",
+) -> str:
+    """Jinja filter: render a timestamp in the display zone (Eastern).
+
+    Registered as ``|display_dt`` (bound to ``DISPLAY_TZ``) so no template ever
+    formats a raw stored instant. Timestamps are stored and compared in UTC;
+    this is the single conversion point on the way out. A naive datetime is
+    assumed to be UTC, which is what every naive value in this codebase means.
+    ``%Z`` renders a DST-correct label — EDT in summer, EST in winter — so a
+    viewer never sees a UTC clock time.
+    """
+    if not isinstance(value, datetime):
+        return "" if value is None else str(value)
+    aware = (
+        value if value.tzinfo is not None else value.replace(tzinfo=ZoneInfo("UTC"))
+    )
+    return aware.astimezone(ZoneInfo(tz)).strftime(fmt)
+
+
+# How long past its lock instant a show still counts as "playing right now" on
+# the home page. The resolver only stamps ``resolved_at`` once the setlist is
+# published upstream, which routinely lags the encore by hours, so the live
+# entry point needs its own time box or it would linger until the next morning.
+# Lock lands at showtime, so this window covers doors-to-encore plus slop.
+LIVE_SHOW_WINDOW_HOURS = 6
+
+
+async def home_show_pointers(
+    pool: asyncpg.Pool[Any],
+) -> tuple[date | None, date | None]:
+    """Resolve the home page's two show pointers from ``prediction_locks``.
+
+    Returns ``(live_show_date, recent_show_date)``:
+
+    - **live**: the show playing right now — locked, not yet finalized, and
+      still inside ``LIVE_SHOW_WINDOW_HOURS`` of its lock instant. Drives the
+      showtime-only "watch it live" button.
+    - **recent**: the most recently played show, excluding whichever one is
+      live. Drives the "last show's setlist" entry point, which is what
+      players reach for the morning after.
+
+    DB-only (no upstream call) and safe on an empty table: every show the game
+    targets gets a ``prediction_locks`` row the first time the home page or the
+    predict form resolves it, so this table is the reliable show spine.
+
+    Timezone: the window is pure instant arithmetic on two ``TIMESTAMPTZ``
+    values, so it is correct regardless of the container's ``TZ``. It never
+    computes a calendar "today", which is the thing that breaks under UTC.
+    ``lock_at`` itself is anchored to the venue's local showtime (see
+    ``locks.compute_default_lock_at``) and is rendered to viewers in
+    ``DISPLAY_TZ`` (Eastern), so nothing here surfaces a UTC clock.
+    """
+    async with pool.acquire() as conn:
+        live: date | None = await conn.fetchval(
+            """
+            SELECT show_date
+              FROM prediction_locks
+             WHERE resolved_at IS NULL
+               AND COALESCE(lock_at_override, lock_at) <= now()
+               AND COALESCE(lock_at_override, lock_at)
+                     > now() - ($1 || ' hours')::interval
+             ORDER BY show_date DESC
+             LIMIT 1
+            """,
+            str(LIVE_SHOW_WINDOW_HOURS),
+        )
+        recent: date | None = await conn.fetchval(
+            """
+            SELECT show_date
+              FROM prediction_locks
+             WHERE COALESCE(lock_at_override, lock_at) <= now()
+               AND ($1::date IS NULL OR show_date <> $1::date)
+             ORDER BY show_date DESC
+             LIMIT 1
+            """,
+            live,
+        )
+    return live, recent
+
+
 def _format_lock(lock: LockState, settings: Settings) -> dict[str, Any]:
     # Render in the viewer-facing display tz (Eastern by default), not the
     # anchor tz the lock was computed in. strftime("%Z") on a ZoneInfo zone is
@@ -301,6 +398,11 @@ def build_app(
     provider: EmailProvider = email_provider or build_provider(cfg)
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    # Single display-layer timezone conversion for every timestamp the site
+    # renders. Storage and comparison stay UTC; templates call
+    # ``{{ ts|display_dt }}`` and always get DISPLAY_TZ (Eastern by default,
+    # DST-aware via ZoneInfo). No template formats a stored instant directly.
+    templates.env.filters["display_dt"] = partial(display_dt, tz=cfg.display_tz)
     templates.env.globals["site_name"] = cfg.site_name
     templates.env.globals["theme_file"] = cfg.theme_file
     # Content hash of the CSS, appended as ``?v=`` to the static stylesheet
@@ -475,6 +577,19 @@ def build_app(
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         user = await _resolve_user(request)
+        # Two DB-only show pointers (see home_show_pointers): the show playing
+        # right now, and the most recently played one. Cheap enough to run on
+        # every landing-page hit and independent of upstream availability.
+        live_show: dict[str, Any] | None = None
+        recent_show: dict[str, Any] | None = None
+        try:
+            live_date, recent_date = await home_show_pointers(get_pool())
+            if live_date is not None:
+                live_show = {"show_date": live_date, "venue": None}
+            if recent_date is not None:
+                recent_show = {"show_date": recent_date, "venue": None}
+        except RuntimeError:
+            pass
         # Resolve the upcoming show for everyone (not just signed-in users) so
         # the home-page countdown widget renders for anonymous visitors too.
         upcoming = None
@@ -483,6 +598,19 @@ def build_app(
                 cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
             ) as mcp:
                 upcoming = await select_form_show(cfg, mcp)
+                # Best-effort venue labels for the live / most-recent buttons,
+                # on the client we already have open. A failure here leaves the
+                # bare date, which still links correctly.
+                for card in (live_show, recent_show):
+                    if card is None:
+                        continue
+                    try:
+                        meta = await mcp.get_show(card["show_date"].isoformat())
+                    except McpPhishError:
+                        continue
+                    venue = meta.get("venue") or {}
+                    if isinstance(venue, dict):
+                        card["venue"] = venue.get("name") or venue.get("location")
         except McpPhishError:
             logger.warning("mcp-phish unreachable on /; rendering without show")
             upcoming = None
@@ -509,6 +637,8 @@ def build_app(
             upcoming_show=upcoming,
             upcoming_lock=upcoming_lock,
             entrant_count=entrant_count,
+            live_show=live_show,
+            recent_show=recent_show,
         )
 
     def _safe_next(raw: str) -> str:
@@ -2587,7 +2717,7 @@ def build_app(
         try:
             from setlist_stash.resolve import latest_run_summary
             pool = get_pool()
-            latest = await latest_run_summary(pool)
+            latest = await latest_run_summary(pool, display_tz=cfg.display_tz)
             if latest is None:
                 body["resolver_last_run"] = None
                 body["resolver_last_status"] = None

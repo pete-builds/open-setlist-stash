@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
@@ -488,7 +488,11 @@ async def list_show_entrants(
             show_date,
             limit,
         )
-    now = datetime.now()
+    # Timezone-aware UTC, matching what asyncpg hands back for the real
+    # ``refreshed_at`` TIMESTAMPTZ rows. The template's ``display_dt`` filter
+    # converts to Eastern on the way out; a naive local ``datetime.now()`` here
+    # would render as an unconverted server clock.
+    now = datetime.now(UTC)
     return [
         LeaderboardRow(
             scope="entrants",

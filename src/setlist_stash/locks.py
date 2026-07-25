@@ -284,8 +284,12 @@ async def select_form_show(
     surface the *nearest* future date once far-future shows (e.g. next-year
     runs) exist upstream. We instead pull each candidate year via
     ``search_shows`` and take the minimum future date.
+
+    "Today" is evaluated in ``DISPLAY_TZ`` (Eastern), never in the container's
+    zone. Containers run ``TZ=UTC``, where ``date.today()`` flips to tomorrow
+    at 8pm Eastern — so a show would stop being "today's show" mid-set.
     """
-    today = date.today()
+    today = datetime.now(tz=ZoneInfo(settings.display_tz)).date()
 
     # Operator override: only while the pinned date is still upcoming.
     if settings.admin_show_date and settings.admin_show_date >= today:
