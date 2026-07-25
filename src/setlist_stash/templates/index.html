@@ -10,14 +10,29 @@
      render the same clean line. #}
   <p class="home-tagline">Predict the setlist. Climb the leaderboard.</p>
 
+  {# The board is ONE card in every state, so showtime reads as a continuation
+     rather than a "next show" panel with a live button bolted above it.
+     ``on_now`` means the card is describing the show currently being played
+     (see LIVE_SHOW_WINDOW_HOURS in server.py) rather than one still upcoming:
+     the heading, the status line, the entrant line and the CTA all switch
+     together. #}
+  {% set on_now = live_show and upcoming_show and live_show.show_date == upcoming_show.show_date %}
+
   {% if upcoming_show and upcoming_lock %}
-    <div class="next-show" id="next-show">
+    <div class="next-show{% if on_now %} next-show--live{% endif %}" id="next-show">
       <p class="next-show-where">
-        Next show:
+        {% if on_now %}
+          <span class="live-dot" aria-hidden="true"></span>
+          <span class="live-label">On stage now</span> &middot;
+        {% else %}
+          Next show:
+        {% endif %}
         <strong>{{ upcoming_show.venue_name or upcoming_show.show_date }}</strong>
         {% if upcoming_show.location %} &middot; {{ upcoming_show.location }}{% endif %}
       </p>
-      {% if upcoming_lock.is_locked %}
+      {% if on_now %}
+        <p class="next-show-lock">Picks are locked. Scores are climbing as songs get played.</p>
+      {% elif upcoming_lock.is_locked %}
         <p class="next-show-lock">Picks locked &middot; scoring live</p>
       {% else %}
         <p class="next-show-lock">
@@ -27,19 +42,25 @@
       {% endif %}
       {% if entrant_count %}
         <p class="next-show-players">
-          🎸 <strong>{{ entrant_count }}</strong> player{% if entrant_count != 1 %}s{% endif %} in
-          for {{ upcoming_show.venue_name or upcoming_show.location or upcoming_show.show_date }}
+          🎸 <strong>{{ entrant_count }}</strong> player{% if entrant_count != 1 %}s{% endif %}
+          {%- if on_now %} in the running tonight
+          {%- else %} in for {{ upcoming_show.venue_name or upcoming_show.location or upcoming_show.show_date }}
+          {%- endif %}
+        </p>
+      {% endif %}
+      {% if on_now %}
+        <p class="live-now">
+          <a class="btn btn-primary btn-lg live-now-btn"
+             href="/show/{{ live_show.show_date }}/predictions">Watch the setlist live</a>
         </p>
       {% endif %}
     </div>
   {% endif %}
 
-  {# Showtime-only entry point. Rendered while a show is locked, unfinalized
-     and still inside the live window (see LIVE_SHOW_WINDOW_HOURS in
-     server.py), so the band is on stage and the setlist page is filling in
-     song by song. Sits above the picks CTA because during a show, watching
-     beats picking. #}
-  {% if live_show %}
+  {# Fallback live entry point for the after-midnight case: the show is still
+     being played but the "upcoming" pointer has already rolled to the next
+     date, so the card above is describing a different show. #}
+  {% if live_show and not on_now %}
     <p class="live-now">
       <a class="btn btn-primary btn-lg live-now-btn"
          href="/show/{{ live_show.show_date }}/predictions">
@@ -54,10 +75,19 @@
 
   {% if current_user %}
     {# Signed-in players already have a handle: their single CTA is jumping
-       straight to the pick sheet for the upcoming show. #}
+       straight to the pick sheet for the upcoming show. During a show that
+       sheet is locked, so the CTA becomes the live scoreboard instead of a
+       dead end. #}
     <div class="card home-welcome">
       <p>Welcome back, <strong>{{ current_user.handle }}</strong>.</p>
-      {% if upcoming_show %}
+      {% if on_now %}
+        <p>
+          <a class="btn btn-primary btn-lg" href="/show/{{ live_show.show_date }}/predictions">📊 Live scoreboard</a>
+        </p>
+        {% if enable_games %}
+        <p><a class="btn" href="/leagues">Your games</a></p>
+        {% endif %}
+      {% elif upcoming_show %}
         <p>
           <a class="btn btn-primary btn-lg" href="/predict/{{ upcoming_show.show_date }}">🎸 Make your picks</a>
         </p>

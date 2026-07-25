@@ -1280,11 +1280,27 @@ table.stat-table tbody tr:last-child td { border-bottom: 0; }
   margin: 0.6rem 0 0;
 }
 
-/* Showtime-only "Live now" button + its venue caption. Uses theme vars only,
-   so the Wappy denim theme inherits it without an override. The pulsing dot
-   is the only signal that this button is different from the other CTAs. */
+/* Showtime. The next-show card becomes the live card in place — same box,
+   different voice — so the page reads as one board instead of a "next show"
+   panel with a live button stacked above it. Theme vars only, so the Wappy
+   denim theme inherits it without an override. */
+.next-show--live {
+  border-color: var(--error);
+  box-shadow: var(--shadow-sm);
+}
+.next-show--live .next-show-lock {
+  color: var(--text);
+}
+.live-label {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.82rem;
+  color: var(--error);
+}
 .live-now {
-  margin: 0.4rem 0 0.3rem;
+  margin: 0.9rem 0 0.1rem;
 }
 .live-now-btn {
   display: inline-flex;
