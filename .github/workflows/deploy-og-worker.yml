@@ -1,0 +1,20 @@
+name: Deploy OG Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - workers/tweezerpicks-og/**
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy tweezerpicks-og Cloudflare Worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: workers/tweezerpicks-og
