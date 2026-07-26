@@ -490,6 +490,9 @@ def build_app(
     # MCP_ALIAS is unset, so tweezerpicks renders "phish" and wappypicks renders
     # "umphreys" with no per-deployment config.
     templates.env.globals["mcp_alias"] = cfg.mcp_alias_effective
+    # Canonical base URL for absolute-URL meta tags (OG image, canonical link).
+    # Stripped of trailing slash so templates write ``{{ canonical_base }}/.../x``.
+    templates.env.globals["canonical_base"] = cfg.base_url.rstrip("/")
 
     # Public MCP reverse proxy (oss-platform-split): only active when an
     # upstream is configured for this deployment. When unset, /mcp is not
