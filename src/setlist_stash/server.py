@@ -19,7 +19,7 @@ import hashlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from functools import partial
 from html import escape
 from pathlib import Path
@@ -66,6 +66,7 @@ from setlist_stash.comments import (
     list_comments,
     soft_delete_comment,
 )
+from setlist_stash.completeness import read_setlist_snapshot
 from setlist_stash.config import Settings, get_settings
 from setlist_stash.db import close_pool, get_pool, init_pool
 from setlist_stash.email import EmailProvider, EmailSendError, build_provider
@@ -102,6 +103,7 @@ from setlist_stash.locks import (
     LockState,
     assist_allowed,
     get_or_create_lock,
+    live_board_active,
     read_lock,
     select_form_show,
     select_next_show,
@@ -1276,39 +1278,68 @@ def build_app(
         # with no setlist published, so every score is NULL until the first
         # resolver tick.
         any_scored = any(r["score"] is not None for r in rows)
-        # Live setlist: fold a single soft get_show into this existing post-lock
-        # data path so players watch the setlist fill in beside the standings.
-        # Reuses the same MCP client/error pattern as /assist (no second client).
-        # A failure/timeout degrades to an empty list — the standings still
-        # render and the template shows a "not posted yet" placeholder.
+        # Live setlist. PREFERRED SOURCE is the resolver's snapshot: the exact
+        # setlist the scores in `rows` were computed from (migration 009). That
+        # is what makes this page internally consistent — a song can't appear
+        # here before the standings next to it count it, no matter how often
+        # the browser refreshes, because both halves come off one resolver tick.
+        # It also means page views cost nothing upstream.
+        #
+        # FALLBACK is the original live get_show: shows resolved before 009 have
+        # no snapshot, and neither does a show whose first tick hasn't run. Same
+        # soft-failure stance as before (empty list -> "not posted yet"), so an
+        # upstream outage still renders the standings.
         setlist_groups: list[dict[str, Any]] = []
-        try:
-            async with McpPhishClient(
-                cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
-            ) as mcp:
-                show_meta = await mcp.get_show(show_date.isoformat())
-            setlist_groups = _group_setlist(
-                list(show_meta.get("setlist") or [])
-            )
-        except McpPhishError:
-            logger.warning(
-                "get_show failed in /show/predictions (setlist degraded)",
-                extra={"show_date": str(show_date)},
-            )
-        return _render(
-            request,
-            "show_predictions.html",
-            current_user=user,
-            show_date=show_date,
-            lock=_format_lock(lock, cfg),
-            rows=[dict(r) for r in rows],
+        snapshot, _snapshot_at = await read_setlist_snapshot(pool, show_date)
+        if snapshot is not None:
+            setlist_groups = _group_setlist(snapshot)
+        else:
+            try:
+                async with McpPhishClient(
+                    cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
+                ) as mcp:
+                    show_meta = await mcp.get_show(show_date.isoformat())
+                setlist_groups = _group_setlist(
+                    list(show_meta.get("setlist") or [])
+                )
+            except McpPhishError:
+                logger.warning(
+                    "get_show failed in /show/predictions (setlist degraded)",
+                    extra={"show_date": str(show_date)},
+                )
+        # Auto-refresh only while the show is genuinely live: locked, not yet
+        # finalized, and still inside the same active window the resolver uses
+        # for its fast cadence. Past that the data stops moving, so polling
+        # would just be load. Zero disables it entirely.
+        live_now = live_board_active(
+            lock_at=lock.lock_at,
             resolved=resolved,
-            any_scored=any_scored,
-            pre_lock=False,
-            entrant_count=entrant_count,
-            setlist_groups=setlist_groups,
-            comments=comments,
+            now=datetime.now(UTC),
+            active_window_hours=cfg.resolver_active_window_hours,
         )
+        refresh_seconds = cfg.live_refresh_seconds if live_now else 0
+        ctx: dict[str, Any] = {
+            "current_user": user,
+            "show_date": show_date,
+            "lock": _format_lock(lock, cfg),
+            "rows": [dict(r) for r in rows],
+            "resolved": resolved,
+            "any_scored": any_scored,
+            "pre_lock": False,
+            "entrant_count": entrant_count,
+            "setlist_groups": setlist_groups,
+            "comments": comments,
+            "live_refresh_seconds": refresh_seconds,
+        }
+        # htmx refresh: return ONLY the board fragment (setlist + standings).
+        # Same route, same query, same snapshot — the fragment is by
+        # construction the identical render the full page would have produced,
+        # which is what keeps the two halves in lockstep. The comment thread
+        # polls its own fragment and is deliberately outside this swap so a
+        # half-typed comment survives a board refresh.
+        if request.headers.get("HX-Request", "").lower() == "true":
+            return _render(request, "_live_board.html", **ctx)
+        return _render(request, "show_predictions.html", **ctx)
 
     # ----- per-show comment threads -----------------------------------------
 

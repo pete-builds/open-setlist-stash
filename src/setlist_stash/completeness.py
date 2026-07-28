@@ -53,6 +53,7 @@ tightening ``stable_polls`` or shortening the backstop.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -197,3 +198,69 @@ async def upsert_poll_state(pool: asyncpg.Pool[Any], state: PollState) -> None:
             state.stable_polls,
             state.complete,
         )
+
+
+# ----- setlist snapshot (migration 009) -------------------------------------
+#
+# The resolver already holds the exact setlist it scored a tick against. It
+# writes that list here so the live show page can render the setlist and the
+# standings from the SAME tick instead of pairing a fresh upstream read with
+# older scores. Two consequences worth keeping in mind before changing this:
+#
+#   1. Consistency is the point. Do NOT "improve" the page by re-fetching a
+#      fresher setlist alongside these scores — that re-opens the exact drift
+#      this closes (a song visible on the page that the scores don't count).
+#   2. Upstream politeness falls out of it. Page renders no longer call the
+#      MCP for a setlist, so viewer count and client refresh cadence add zero
+#      load on phish.net / allthings.umphreys.com. The resolver's poll is the
+#      only thing upstream sees.
+
+
+async def save_setlist_snapshot(
+    pool: asyncpg.Pool[Any], show_date: Any, setlist: list[Any]
+) -> None:
+    """Persist the setlist this tick scored against, stamped ``scored_at``.
+
+    Called immediately after scoring, on the same list that was scored. The
+    row is created by ``upsert_poll_state`` earlier in the same tick, so this
+    is always an UPDATE; a missing row is a no-op rather than an error.
+
+    Callers MUST treat failures as non-fatal — a snapshot is a display
+    convenience, and losing one must never cost a show its scoring.
+    """
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE poll_state
+               SET setlist_json = $2::jsonb,
+                   scored_at    = now()
+             WHERE show_date = $1
+            """,
+            show_date,
+            json.dumps(setlist),
+        )
+
+
+async def read_setlist_snapshot(
+    pool: asyncpg.Pool[Any], show_date: Any
+) -> tuple[list[Any] | None, datetime | None]:
+    """Read the last-scored setlist snapshot for a show.
+
+    Returns ``(None, None)`` when no snapshot exists — any show resolved
+    before migration 009, or one whose first resolver tick hasn't run. Callers
+    fall back to a live upstream read in that case.
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT setlist_json, scored_at FROM poll_state WHERE show_date = $1",
+            show_date,
+        )
+    if row is None or row["setlist_json"] is None:
+        return None, None
+    raw = row["setlist_json"]
+    # asyncpg returns JSONB as str unless a codec is registered; the pool here
+    # registers none, so decode defensively and accept either shape.
+    setlist = json.loads(raw) if isinstance(raw, str) else raw
+    if not isinstance(setlist, list):
+        return None, None
+    return setlist, row["scored_at"]

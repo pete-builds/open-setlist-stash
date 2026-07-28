@@ -171,21 +171,63 @@ class Settings(BaseSettings):
     # scores in forever. The resolver therefore scores a show ONLY when its
     # setlist looks final. A setlist is COMPLETE when an encore is detected AND
     # the track count has held steady across this many consecutive polls...
-    resolver_stable_polls_required: int = Field(default=6, ge=1)
+    #
+    # !! COUPLED TO ``resolver_active_interval_seconds`` !!
+    # What actually protects a show is the QUIET WINDOW this buys:
+    #     quiet_window = resolver_stable_polls_required * active_interval
+    # The default pair (30 x 60s) is 30 minutes of no new tracks after the
+    # encore is seen. Speeding the poll cadence up WITHOUT raising this count
+    # silently shortens that window — at a 60s cadence, 6 polls is 6 minutes,
+    # short enough that a gap between encore song 1 and encore song 2 reads as
+    # "final" and freezes an incomplete score. Change the two together and keep
+    # the product at ~30 minutes. The resolver logs the derived quiet window on
+    # startup so the effective value is observable, not inferred.
+    resolver_stable_polls_required: int = Field(default=30, ge=1)
     # ...OR this many hours have elapsed since the effective lock (time
     # backstop). A Phish show is ~3h and the setlist settles well within this,
     # so 6h guarantees eventual scoring even if the stability signal never
     # converges (e.g. phish.net edits trickle for days).
     resolver_backstop_hours: int = Field(default=6, ge=1)
     # Fast poll cadence used while an open unresolved lock has an active show
-    # window (between effective lock and lock + backstop). Default 5 min,
-    # matching the phish-vault active-poll cadence so stable-poll math lines up
-    # (6 stable polls * 5 min = 30 min of no new tracks).
-    resolver_active_interval_seconds: int = Field(default=300, ge=30)
+    # window (between effective lock and lock + backstop). Default 60s: fast
+    # enough that the live page feels live, and the only thing that ever talks
+    # to the upstream MCP during a show (page renders read the snapshot from
+    # Postgres, so viewers add no upstream load at any refresh rate).
+    #
+    # An interval shorter than the upstream MCP's hot-window cache TTL just
+    # re-reads a cached response and buys nothing. mcp-phish ships
+    # HOT_WINDOW_CACHE_TTL_SECONDS=90, so lower that to <= this value if you go
+    # below 90s — otherwise the completeness gate counts cache hits as "stable"
+    # polls, which is exactly the failure mode documented in completeness.py.
+    #
+    # This is the REAL ceiling on how fresh the live show page can be: the page
+    # renders the setlist snapshot the resolver scored, so tightening the
+    # browser refresh below this value buys nothing. Speed both up together, or
+    # neither. See resolver_stable_polls_required for the coupling that keeps
+    # the completeness gate honest at a faster cadence.
+    resolver_active_interval_seconds: int = Field(default=60, ge=30)
     # How long after the effective lock the show window stays "active" for the
     # fast cadence. Defaults to the backstop so the coarse interval resumes
     # once the backstop would have fired anyway.
     resolver_active_window_hours: int = Field(default=6, ge=1)
+
+    # --- Live show page refresh ---
+    # Seconds between browser refreshes of the live show board (setlist +
+    # standings) on /show/<date>/predictions. ONE htmx poll re-renders both
+    # halves from a single server response, so scores can never lag the setlist
+    # on screen.
+    #
+    # It only runs while the show is actually live (post-lock, unresolved, and
+    # inside RESOLVER_ACTIVE_WINDOW_HOURS of the lock) — outside that window the
+    # page is static, exactly as before. Set to 0 to disable auto-refresh.
+    #
+    # Costs nothing upstream: the board reads the resolver's setlist snapshot
+    # out of Postgres, so extra viewers and faster polling never touch
+    # phish.net / allthings.umphreys.com. Only the resolver does.
+    # There is no point setting this lower than
+    # RESOLVER_ACTIVE_INTERVAL_SECONDS — that's how often the data behind it
+    # actually changes.
+    live_refresh_seconds: int = Field(default=60, ge=0, le=3600)
 
     # --- Session / handle ---
     session_secret: SecretStr = Field(default=SecretStr("dev-only-do-not-use-in-prod"))

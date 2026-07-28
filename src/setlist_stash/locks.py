@@ -374,3 +374,31 @@ def _to_show_target(d: date, row: dict[str, Any]) -> ShowTarget:
         location=row.get("location"),
         tour_name=row.get("tour_name"),
     )
+
+
+def live_board_active(
+    *,
+    lock_at: datetime,
+    resolved: bool,
+    now: datetime,
+    active_window_hours: int,
+) -> bool:
+    """Is the live show board still worth auto-refreshing?
+
+    True only while a show is genuinely in play: past its lock, not yet
+    finalized, and inside the same active window the resolver uses for its fast
+    poll cadence (``resolver_active_window_hours``). Deliberately the SAME
+    window as the resolver — the page renders the resolver's snapshot, so once
+    the resolver drops back to its coarse cadence there is nothing new for the
+    browser to fetch.
+
+    Both negative cases matter:
+    - ``resolved`` going True is what makes an open tab stop polling on its own
+      the moment the show finalizes, with no page reload.
+    - The window bound stops a show whose setlist never published from leaving
+      tabs polling all night.
+    """
+    return (
+        not resolved
+        and lock_at <= now < lock_at + timedelta(hours=active_window_hours)
+    )

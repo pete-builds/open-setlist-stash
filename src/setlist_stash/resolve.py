@@ -38,6 +38,7 @@ from setlist_stash import __version__
 from setlist_stash.completeness import (
     evaluate_completeness,
     read_poll_state,
+    save_setlist_snapshot,
     upsert_poll_state,
 )
 from setlist_stash.config import Settings, get_settings
@@ -335,6 +336,19 @@ async def _resolve_show(
     # freezes a wrong score. The completeness gate now only decides when to
     # FINALIZE (stamp resolved_at) so we stop re-scoring on later ticks.
     scored_count = await _score_predictions(pool, show_date_obj, parsed)
+
+    # Publish the exact setlist those scores were computed from, so the live
+    # show page renders setlist + standings from ONE tick and can never show a
+    # song the scores don't yet count. Deliberately fail-soft: a snapshot is a
+    # display convenience and must never be able to cost a real show its
+    # scoring. If this write fails the page just falls back to a live read.
+    try:
+        await save_setlist_snapshot(pool, show_date_obj, setlist)
+    except Exception:  # pragma: no cover - defensive, never fatal
+        logger.exception(
+            "setlist snapshot write failed; page will fall back to a live read",
+            extra={"show_date": show_date},
+        )
 
     if not decision.complete:
         logger.info(
@@ -714,6 +728,16 @@ async def _amain(loop: bool, interval_override: int | None) -> int:
                 "interval_override": interval_override,
                 "coarse_interval_seconds": settings.resolver_interval_seconds,
                 "active_interval_seconds": settings.resolver_active_interval_seconds,
+                # Derived, not configured: stable_polls * active_interval is the
+                # real protection against finalizing a show mid-encore. Logged so
+                # a cadence change that quietly shrank it is visible in the logs
+                # instead of only showing up as a wrong score months later.
+                "stable_polls_required": settings.resolver_stable_polls_required,
+                "stable_quiet_window_seconds": (
+                    settings.resolver_stable_polls_required
+                    * settings.resolver_active_interval_seconds
+                ),
+                "live_refresh_seconds": settings.live_refresh_seconds,
                 "version": __version__,
             },
         )
