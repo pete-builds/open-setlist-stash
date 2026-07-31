@@ -1,4 +1,4 @@
-fastapi==0.139.2
+fastapi==0.140.9
 # Direct pin on a transitive dep. fastapi only asks for starlette>=0.46.0, and
 # the resolver was settling on 1.0.0, which carries two HIGH CVEs:
 # CVE-2026-48818 (SSRF + NTLM credential theft via UNC paths, fixed 1.1.0) and
