@@ -24,6 +24,12 @@ the policy allows was read off the templates rather than guessed:
   ``img-src`` allows any ``https:`` origin. Images are not a script-execution
   sink; the directives that matter for XSS stay tight.
 
+What the templates cannot tell you is what an **edge injects**. Cloudflare Web
+Analytics rewrites HTML at the CDN to add ``static.cloudflareinsights.com/
+beacon.min.js``, which no local or CI check can see. ``CSP_EXTRA_SCRIPT_SRC``
+and ``CSP_EXTRA_CONNECT_SRC`` exist for exactly that: a deployment declares its
+own edge rather than the platform hardcoding one vendor.
+
 **Known weakness, stated plainly:** ``script-src`` includes ``'unsafe-inline'``.
 The templates carry 14 inline ``<script>`` blocks and three
 ``onsubmit="return confirm(...)"`` attributes. Nonces do not cover inline event
@@ -71,6 +77,10 @@ def build_csp(settings: Settings) -> str:
     if settings.analytics_id:
         script_src.append(_GA_SCRIPT_HOST)
         connect_src.extend(_GA_CONNECT_HOSTS)
+    # Deployment-declared extras, for scripts an edge/CDN injects that the app
+    # never rendered and cannot know about. See config.csp_extra_script_src.
+    script_src.extend(settings.csp_extra_script_src.split())
+    connect_src.extend(settings.csp_extra_connect_src.split())
 
     directives: list[tuple[str, str]] = [
         # Everything not named below falls back to same-origin only.
