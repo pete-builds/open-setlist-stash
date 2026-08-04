@@ -271,6 +271,23 @@ class Settings(BaseSettings):
     # host for the full duration, so lower it BEFORE any planned move off TLS.
     # includeSubDomains/preload are deliberately not offered here.
     hsts_max_age_seconds: int = Field(default=31_536_000, ge=0)
+    # Extra origins to append to the CSP's script-src / connect-src, as a
+    # space-separated list. Empty by default: the shipped policy names no third
+    # party unless that deployment configured one.
+    #
+    # This exists because an edge/CDN in front of the app can inject a script
+    # the app never rendered and therefore cannot know about. Found live rather
+    # than in review: Cloudflare's Web Analytics injects
+    # ``static.cloudflareinsights.com/beacon.min.js`` into the HTML at the
+    # edge, so the first CSP deploy blocked it on both public deployments while
+    # every local and CI check passed. Hardcoding Cloudflare into a
+    # band-agnostic platform would be wrong; letting a deployment name its own
+    # edge is not.
+    #
+    #   CSP_EXTRA_SCRIPT_SRC=https://static.cloudflareinsights.com
+    #   CSP_EXTRA_CONNECT_SRC=https://cloudflareinsights.com
+    csp_extra_script_src: str = Field(default="")
+    csp_extra_connect_src: str = Field(default="")
 
     # --- Google SSO (Phase 1) ---
     # OAuth 2.0 / OpenID Connect "Web application" client credentials. Both

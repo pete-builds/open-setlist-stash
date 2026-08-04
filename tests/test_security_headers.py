@@ -65,6 +65,42 @@ class TestCsp:
         assert "https://www.google-analytics.com" in on["connect-src"]
 
 
+class TestEdgeInjectedScriptEscapeHatch:
+    """A CDN can inject a script the app never rendered.
+
+    Cloudflare Web Analytics rewrites HTML at the edge to add
+    static.cloudflareinsights.com/beacon.min.js. No template check, unit test,
+    or CI run can see that, and the first CSP deploy blocked it on both public
+    deployments. The platform must not hardcode one CDN vendor, so a deployment
+    declares its own.
+    """
+
+    def test_extra_origins_are_appended(self) -> None:
+        d = _directives(
+            build_csp(
+                Settings(
+                    csp_extra_script_src="https://static.cloudflareinsights.com",
+                    csp_extra_connect_src="https://cloudflareinsights.com",
+                )
+            )
+        )
+        assert "https://static.cloudflareinsights.com" in d["script-src"]
+        assert "https://cloudflareinsights.com" in d["connect-src"]
+        # The baseline is still intact.
+        assert d["default-src"] == "'self'"
+        assert "'unsafe-eval'" not in d["script-src"]
+
+    def test_multiple_origins_are_space_separated(self) -> None:
+        d = _directives(
+            build_csp(Settings(csp_extra_script_src="https://a.example https://b.example"))
+        )
+        assert "https://a.example" in d["script-src"]
+        assert "https://b.example" in d["script-src"]
+
+    def test_empty_by_default_so_the_oss_policy_names_no_cdn(self) -> None:
+        assert "cloudflare" not in build_csp(Settings()).lower()
+
+
 class TestHsts:
     def test_absent_on_a_plain_http_deployment(self) -> None:
         headers = build_security_headers(Settings(cookie_secure=False))
