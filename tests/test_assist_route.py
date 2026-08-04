@@ -1,6 +1,6 @@
 """Route tests for /show/{date}/assist and /show/{date}/predictions.
 
-Covers PHASE-4-PLAN.md §7 (assist gating):
+Covers docs/PHASE-4-PLAN.md §7 (assist gating):
     - Pre-lock with default config: assist returns the locked message,
       gap chart and venue history are NOT in the response.
     - Pre-lock with ``ASSIST_PRE_LOCK=true`` override: assist renders

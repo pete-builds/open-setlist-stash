@@ -9,7 +9,7 @@ Build session 1 routes:
 - GET  /healthz                 status + mcp-phish reachability + DB ping
 
 Out of scope for this session: leaderboards, resolver wiring, magic-link
-email, post-lock assist views. See PHASE-4-PLAN.md §9.
+email, post-lock assist views. See docs/PHASE-4-PLAN.md §9.
 """
 
 from __future__ import annotations

@@ -16,7 +16,7 @@ stored once on the app state. Routes call ``provider.send(...)`` rather
 than caring about the transport.
 
 Auth boundary note: the platform is Tailscale/LAN-only through Phase 5
-(see PHASE-4-PLAN.md and phish-platform.md). Magic links emailed today
+(see docs/PHASE-4-PLAN.md and phish-platform.md). Magic links emailed today
 will only work for Pete's Gmail -> Tailscale browser. Documented; that
 is the intended use case for Phase 4b.
 """

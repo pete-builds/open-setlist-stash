@@ -156,7 +156,7 @@ class Settings(BaseSettings):
     # Legacy (Phase 4 plan §5 Option A naming). Kept for backwards-compat
     # with .env files that already set it.
     resolve_interval_minutes: int = Field(default=30, ge=1)
-    # Inside-container loop interval (PHASE-4-PLAN.md §5 Option B; used by
+    # Inside-container loop interval (docs/PHASE-4-PLAN.md §5 Option B; used by
     # the setlist-stash-resolver service).
     resolver_interval_seconds: int = Field(default=1800, ge=60)
     # Conservative cancelled-show window. A show whose lock_at is older than
@@ -273,7 +273,7 @@ class Settings(BaseSettings):
     smtp_from: str = Field(default="")
 
     # --- Smart-pick assist gate ---
-    # MUST stay False during the prediction window. See PHASE-4-PLAN.md.
+    # MUST stay False during the prediction window. See docs/PHASE-4-PLAN.md.
     assist_pre_lock: bool = Field(default=False)
 
     # --- Private leagues (Phase 4c) ---

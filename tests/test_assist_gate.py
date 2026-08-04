@@ -1,7 +1,7 @@
 """Unit tests for the ``assist_allowed`` gate.
 
 Pure-DB checks (no HTTP). The gate is the single source of truth for the
-smart-pick assist policy from PHASE-4-PLAN.md §7. Three branches:
+smart-pick assist policy from docs/PHASE-4-PLAN.md §7. Three branches:
 
 1. ASSIST_PRE_LOCK=true (dev override): always returns True.
 2. No prediction_locks row + override off: returns False (closed default).
