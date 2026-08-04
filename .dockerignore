@@ -17,5 +17,5 @@ tests
 .gitignore
 SESSION-RESUME.md
 PROBE-NOTES.md
-PHASE-4-PLAN.md
+docs
 docker-compose.yml

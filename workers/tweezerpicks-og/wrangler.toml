@@ -1,7 +1,0 @@
-name = "tweezerpicks-og"
-main = "index.js"
-compatibility_date = "2024-01-01"
-
-[[routes]]
-pattern = "tweezerpicks.com/*"
-zone_name = "tweezerpicks.com"

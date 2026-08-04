@@ -1,7 +1,8 @@
-"""setlist-stash: an open-source setlist prediction game.
+"""setlist-stash: a self-hostable setlist-prediction game driven by MCP.
 
-Band-agnostic: brand a deployment via the SITE_NAME env var and point it at any
-setlist MCP server. See PHASE-4-PLAN.md for design.
+Band-agnostic: the engine stores no setlist data. Point it at any MCP server
+that satisfies the setlist contract (``MCP_PHISH_URL``) and brand the
+deployment via the SITE_NAME env var. See docs/PHASE-4-PLAN.md for design.
 """
 
 __version__ = "0.2.0"

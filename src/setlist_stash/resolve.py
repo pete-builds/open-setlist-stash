@@ -4,7 +4,7 @@ When phish.net publishes a setlist, this module fetches the setlist via
 mcp-phish, scores every prediction for that show, writes the scores back,
 and stamps `prediction_locks.resolved_at`.
 
-PHASE-4-PLAN.md §5 is the design source. Pete approval (build session 2):
+docs/PHASE-4-PLAN.md §5 is the design source. Pete approval (build session 2):
 - Inside-container loop (asyncio.sleep) over external cron, for parity with
   the rest of the homelab and easier log capture.
 - Conservative cancelled-show window: don't auto-cancel within 72h of

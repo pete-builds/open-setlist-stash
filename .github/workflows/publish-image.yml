@@ -4,14 +4,23 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/dependabot-auto-merge.yml"
+    # Release tags publish versioned, immutable images (:0.3.0 and :0.3) so a
+    # self-hoster can pin a release instead of tracking main. `latest` only ever
+    # follows the default branch, never a tag.
+    tags: ["v*"]
+
+# NOTE: no `paths-ignore`. README.md is COPYed into the builder stage (it is the
+# package readme), so a docs-only commit really does change the image. A path
+# filter here would also silently skip tag builds whose commit touched only
+# markdown, which is the exact shape of a release commit.
 
 permissions:
   contents: read
   packages: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -30,13 +39,27 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=open-setlist-stash
+            org.opencontainers.image.description=Self-hostable setlist-prediction game that reads any band's setlist data over MCP.
+            org.opencontainers.image.licenses=MIT
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

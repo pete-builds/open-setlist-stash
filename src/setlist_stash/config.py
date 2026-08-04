@@ -24,6 +24,14 @@ class Settings(BaseSettings):
 
     # --- Branding (deployment-level override) ---
     site_name: str = Field(default="Open Setlist Stash")
+    # One-line blurb used for the social-preview meta tags (og:description,
+    # twitter:description). Empty (the default) DERIVES a band-neutral line from
+    # ``mcp_subject`` / ``site_name`` via ``site_description_effective``. The
+    # base template used to hardcode a Phish-specific sentence, which every
+    # deployment inherited: wappypicks.com advertised itself to social crawlers
+    # as a "Phish setlist picks game". Nothing band-specific belongs in the
+    # platform. Set SITE_DESCRIPTION per deployment to override the derivation.
+    site_description: str = Field(default="")
     # Path under /static/ to an additional CSS file loaded after style.css.
     # Empty disables; e.g. "themes/lot-poster.css" loads the bundled Lot Poster look.
     theme_file: str = Field(default="")
@@ -156,7 +164,7 @@ class Settings(BaseSettings):
     # Legacy (Phase 4 plan §5 Option A naming). Kept for backwards-compat
     # with .env files that already set it.
     resolve_interval_minutes: int = Field(default=30, ge=1)
-    # Inside-container loop interval (PHASE-4-PLAN.md §5 Option B; used by
+    # Inside-container loop interval (docs/PHASE-4-PLAN.md §5 Option B; used by
     # the setlist-stash-resolver service).
     resolver_interval_seconds: int = Field(default=1800, ge=60)
     # Conservative cancelled-show window. A show whose lock_at is older than
@@ -273,7 +281,7 @@ class Settings(BaseSettings):
     smtp_from: str = Field(default="")
 
     # --- Smart-pick assist gate ---
-    # MUST stay False during the prediction window. See PHASE-4-PLAN.md.
+    # MUST stay False during the prediction window. See docs/PHASE-4-PLAN.md.
     assist_pre_lock: bool = Field(default=False)
 
     # --- Private leagues (Phase 4c) ---
@@ -325,6 +333,27 @@ class Settings(BaseSettings):
             if slug:
                 return slug
         return "setlist"
+
+    @property
+    def site_description_effective(self) -> str:
+        """Social-preview blurb for this deployment.
+
+        Explicit ``SITE_DESCRIPTION`` wins. Otherwise derive from the band name
+        the deployment already declares for the /connect page
+        (``MCP_SUBJECT``), falling back to the site name and finally to a fully
+        generic line. Never mentions a band the deployment does not serve.
+        """
+        if self.site_description:
+            return self.site_description
+        if self.mcp_subject:
+            return (
+                f"{self.mcp_subject} setlist picks game. "
+                "Make your calls before the lights go down."
+            )
+        return (
+            f"{self.site_name}: a setlist prediction game. "
+            "Make your calls before the lights go down."
+        )
 
     @property
     def pg_dsn(self) -> str:

@@ -42,7 +42,7 @@ services:
 
   setlist-stash-resolver:
     # Same image as setlist-stash; different command. Inside-container loop
-    # (PHASE-4-PLAN.md §5 Option B). Sleeps RESOLVER_INTERVAL_SECONDS between
+    # (docs/PHASE-4-PLAN.md §5 Option B). Sleeps RESOLVER_INTERVAL_SECONDS between
     # ticks. Restart policy + healthcheck restart it on transient failures
     # without scheduling burden on the host.
     build: .

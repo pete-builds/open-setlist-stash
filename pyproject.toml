@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "open-setlist-stash"
 version = "0.2.0"
-description = "Setlist prediction game for Phish shows. Phase 4 of the Phish Data Platform."
+description = "Self-hostable setlist-prediction game that reads any band's setlist data over MCP."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.13"
 authors = [{ name = "Pete Stergion" }]
-keywords = ["phish", "setlist", "prediction", "game", "fastapi"]
+keywords = ["mcp", "setlist", "prediction", "game", "fastapi", "htmx", "self-hosted", "phish"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: End Users/Desktop",

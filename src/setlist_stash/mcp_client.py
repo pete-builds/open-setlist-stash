@@ -173,7 +173,7 @@ class McpPhishClient:
     ) -> list[dict[str, str]]:
         """Pre-lock autocomplete: returns ONLY {slug, title}.
 
-        See PHASE-4-PLAN.md §7. Stripping happens here so a careless caller
+        See docs/PHASE-4-PLAN.md §7. Stripping happens here so a careless caller
         can't leak gap counts or play counts into a pre-lock UI.
         """
         rows = await self._call_tool("search_songs", {"query": query, "limit": limit})
@@ -269,7 +269,7 @@ class McpPhishClient:
         """Top-N songs ordered by current gap (descending).
 
         Post-lock assist only; gap counts must NOT leak pre-lock (see
-        PHASE-4-PLAN.md §7). The route layer enforces the gate via
+        docs/PHASE-4-PLAN.md §7). The route layer enforces the gate via
         ``assist_allowed`` before calling this.
         """
         rows = await self._call_tool("songs_by_gap", {"limit": limit})

@@ -9,7 +9,7 @@ Build session 1 routes:
 - GET  /healthz                 status + mcp-phish reachability + DB ping
 
 Out of scope for this session: leaderboards, resolver wiring, magic-link
-email, post-lock assist views. See PHASE-4-PLAN.md §9.
+email, post-lock assist views. See docs/PHASE-4-PLAN.md §9.
 """
 
 from __future__ import annotations
@@ -436,6 +436,10 @@ def build_app(
     # DST-aware via ZoneInfo). No template formats a stored instant directly.
     templates.env.filters["display_dt"] = partial(display_dt, tz=cfg.display_tz)
     templates.env.globals["site_name"] = cfg.site_name
+    # Social-preview blurb. Derived per deployment (see
+    # Settings.site_description_effective) so the platform never hardcodes one
+    # band's name into another deployment's og:description.
+    templates.env.globals["site_description"] = cfg.site_description_effective
     templates.env.globals["theme_file"] = cfg.theme_file
     # Content hash of the CSS, appended as ``?v=`` to the static stylesheet
     # links so a styling change is a fresh URL at the Cloudflare edge.

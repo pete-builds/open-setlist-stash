@@ -1,6 +1,6 @@
 """Show selection + lock-time computation.
 
-Phase 4 source-of-truth: ``PHASE-4-PLAN.md`` §4.
+Phase 4 source-of-truth: ``docs/PHASE-4-PLAN.md`` §4.
 
 Default cutoff is ``DEFAULT_LOCK_TIME_LOCAL`` interpreted in the show's
 **venue-local** timezone (resolved from the show location; falls back to
@@ -20,7 +20,7 @@ Show selection for the form (session 1):
 Returning a show without a lock row in the DB is fine. We create the lock
 row lazily on the first prediction submit.
 
-Smart-pick assist gating (PHASE-4-PLAN.md §7):
+Smart-pick assist gating (docs/PHASE-4-PLAN.md §7):
 - ``assist_allowed(pool, show_date, settings)`` returns True iff
   ``now() >= effective lock_at`` OR ``settings.assist_pre_lock`` is True
   (dev override only). This is the single helper every assist surface
@@ -250,7 +250,7 @@ async def read_lock(
 async def assist_allowed(
     pool: asyncpg.Pool[Any], show_date: date, settings: Settings
 ) -> bool:
-    """Single source of truth for the assist gate (PHASE-4-PLAN.md §7).
+    """Single source of truth for the assist gate (docs/PHASE-4-PLAN.md §7).
 
     Returns True iff:
       - the show's lock_at is in the past (post-lock retro is fair game), OR
