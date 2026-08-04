@@ -25,7 +25,7 @@ import pytest
 from setlist_stash.config import get_settings
 from setlist_stash.locks import select_next_show
 from setlist_stash.mcp_client import McpPhishClient
-from setlist_stash.server import home_card_state
+from setlist_stash.web_helpers import home_card_state
 
 MSG_JUL_24 = date(2026, 7, 24)
 MSG_JUL_25 = date(2026, 7, 25)

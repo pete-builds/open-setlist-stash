@@ -116,6 +116,22 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S105", "S106"]
 
+# FastAPI's Depends / Form / Query / Path / Body are meant to be used as
+# argument defaults; that's how the framework wires them into a route
+# signature. Flake8-bugbear's B008 flags any callable in a default, so tell it
+# these are safe. Applies to routers/deps.py after the 2026-08-04 split
+# introduced Depends across every handler.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Form",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

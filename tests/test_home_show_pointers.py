@@ -18,7 +18,7 @@ from typing import Any
 
 import asyncpg
 
-from setlist_stash.server import LIVE_SHOW_WINDOW_HOURS, home_show_pointers
+from setlist_stash.web_helpers import LIVE_SHOW_WINDOW_HOURS, home_show_pointers
 from tests.conftest import requires_pg
 
 

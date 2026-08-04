@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from setlist_stash.server import _gap_label
+from setlist_stash.web_helpers import _gap_label
 
 
 @pytest.mark.parametrize(

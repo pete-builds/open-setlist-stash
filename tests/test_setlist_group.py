@@ -7,7 +7,7 @@ which may omit them, still renders), and defensive handling of junk items.
 
 from __future__ import annotations
 
-from setlist_stash.server import _group_setlist
+from setlist_stash.web_helpers import _group_setlist
 
 
 def test_groups_by_set_in_order() -> None:

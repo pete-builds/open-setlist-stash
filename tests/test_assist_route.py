@@ -147,17 +147,19 @@ async def test_assist_pre_lock_with_admin_override_unlocks(
     base = get_settings()
     overridden = base.model_copy(update={"assist_pre_lock": True})
 
-    # server.py does ``from setlist_stash.locks import assist_allowed`` at import
-    # time, so the route resolves the symbol from the server module's
-    # namespace. Patch THAT binding (not locks.assist_allowed).
+    # The /assist route lives in setlist_stash.routers.predictions and does
+    # ``from setlist_stash.locks import assist_allowed`` at import time, so the
+    # route resolves the symbol from the routers.predictions namespace. Patch
+    # THAT binding (not locks.assist_allowed). (Pre-2026-08-04 the route lived
+    # in server.py and the patch target was setlist_stash.server.)
     from setlist_stash import locks as locks_module
-    from setlist_stash import server as server_module
+    from setlist_stash.routers import predictions as predictions_router
     real_assist = locks_module.assist_allowed
 
     async def _gated(pool: Any, sd: Any, settings: Any) -> bool:
         return await real_assist(pool, sd, overridden)
 
-    with patch.object(server_module, "assist_allowed", _gated):
+    with patch.object(predictions_router, "assist_allowed", _gated):
         resp = await async_client.get(f"/show/{show_date.isoformat()}/assist")
     assert resp.status_code == 200
     body = resp.text.lower()
