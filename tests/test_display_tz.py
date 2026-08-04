@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from setlist_stash.config import get_settings
-from setlist_stash.server import display_dt, display_now
+from setlist_stash.web_helpers import display_dt, display_now
 
 
 def test_summer_instant_renders_as_edt() -> None:
