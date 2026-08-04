@@ -127,6 +127,21 @@
     {% endif %}
   </footer>
   <script>
+    // Reset any form marked data-reset-on-success once its htmx request comes
+    // back OK. Delegated on <body> so it survives htmx swaps and is registered
+    // exactly once per page load.
+    //
+    // This replaces an hx-on::after-request attribute on the comment form.
+    // HTMX evaluates hx-on with `new Function`, which would have forced
+    // script-src 'unsafe-eval' into the CSP for one textarea reset.
+    document.body.addEventListener('htmx:afterRequest', function (e) {
+      var form = e.target;
+      if (!form || typeof form.matches !== 'function') { return; }
+      if (!form.matches('form[data-reset-on-success]')) { return; }
+      if (e.detail && e.detail.successful) { form.reset(); }
+    });
+  </script>
+  <script>
     // Mobile nav toggle. Vanilla JS, no deps. The nav-toggle button is only
     // visible at the mobile breakpoint (CSS); on desktop the nav is always
     // shown and this handler is a harmless no-op. Accessible: toggles

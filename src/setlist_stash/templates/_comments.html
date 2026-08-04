@@ -20,7 +20,12 @@
           hx-post="/show/{{ show_date }}/comments"
           hx-target="#comments-list"
           hx-swap="innerHTML"
-          hx-on::after-request="if(event.detail.successful) this.reset()">
+          {# Clearing the box after a successful post used to be
+             hx-on::after-request. HTMX evaluates hx-on attributes with
+             `new Function`, which needs script-src 'unsafe-eval' under the
+             CSP. The behaviour moved to a delegated htmx:afterRequest
+             listener in base.html, keyed on this attribute. #}
+          data-reset-on-success>
       <textarea name="body" rows="2" maxlength="1000" required
                 aria-label="Add a comment"
                 placeholder="Add to the thread…"></textarea>
