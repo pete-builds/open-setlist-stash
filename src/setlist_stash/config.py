@@ -8,8 +8,19 @@ from __future__ import annotations
 
 from datetime import date
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: The session-signing key the repo ships with. It is public: it is in this
+#: file, in ``.env.example``, and in every published image. Anything signed
+#: with it can be forged by anyone, so a deployment that reaches the public
+#: internet while still using it has no session integrity at all. See
+#: ``Settings._reject_default_session_secret_in_production``.
+# The S105 suppression below is justified, not lazy: ruff is right that this is
+# a hardcoded secret, and that is the entire point of the constant. It exists so
+# the validator can recognise the shipped default and refuse to boot, which is
+# the opposite of the leak S105 guards against.
+DEV_SESSION_SECRET = "dev-only-do-not-use-in-prod"  # noqa: S105
 
 
 class Settings(BaseSettings):
@@ -238,12 +249,28 @@ class Settings(BaseSettings):
     live_refresh_seconds: int = Field(default=60, ge=0, le=3600)
 
     # --- Session / handle ---
-    session_secret: SecretStr = Field(default=SecretStr("dev-only-do-not-use-in-prod"))
+    session_secret: SecretStr = Field(default=SecretStr(DEV_SESSION_SECRET))
     # Send the ``Secure`` flag on session/flash cookies. False (the default)
     # keeps LAN/Tailscale-over-HTTP dev working; set COOKIE_SECURE=true on any
     # HTTPS deployment (e.g. tweezerpicks.com behind Cloudflare) so the cookies
     # are only ever sent over TLS.
     cookie_secure: bool = Field(default=False)
+
+    # --- Response security headers ---
+    # Master switch for the CSP / framing / referrer / HSTS header set (see
+    # security_headers.py). On by default. The escape hatch exists for an
+    # operator fronting the app with a proxy that sets its own policy and does
+    # not want two Content-Security-Policy headers intersecting, which is a
+    # genuinely confusing failure mode.
+    security_headers: bool = Field(default=True)
+    # Strict-Transport-Security max-age, in seconds. Only ever emitted when
+    # COOKIE_SECURE is true (this app's "I am HTTPS-only" declaration), so a
+    # LAN or Tailscale-over-HTTP deployment never sends it. 0 disables it even
+    # on an HTTPS deployment. Default is one year, the conventional value.
+    # NOTE this is sticky: a browser that sees it will refuse plain HTTP to the
+    # host for the full duration, so lower it BEFORE any planned move off TLS.
+    # includeSubDomains/preload are deliberately not offered here.
+    hsts_max_age_seconds: int = Field(default=31_536_000, ge=0)
 
     # --- Google SSO (Phase 1) ---
     # OAuth 2.0 / OpenID Connect "Web application" client credentials. Both
@@ -297,6 +324,48 @@ class Settings(BaseSettings):
     admin_show_date: date | None = Field(default=None)
     admin_show_venue: str | None = Field(default=None)
     admin_show_location: str | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def _reject_default_session_secret_in_production(self) -> Settings:
+        """Refuse to boot on a public deployment still using the shipped key.
+
+        ``SESSION_SECRET`` signs the ``phishgame_session`` identity cookie and
+        keys the OAuth state cookie. The default is published in this repo and
+        baked into every image on ghcr.io, so a deployment that keeps it lets
+        anyone mint a cookie for any user id. Nothing in the app misbehaves
+        when that happens, which is exactly why it would go unnoticed.
+
+        Fail closed rather than warn. A log line at startup is the wrong shape
+        for this: it is emitted once, into a stream nobody reads on the happy
+        path, and the site keeps serving. Two independent signals say "this is
+        not a laptop":
+
+        * ``COOKIE_SECURE=true`` - the operator has declared HTTPS-only.
+        * ``BASE_URL`` is https - the operator has a public origin.
+
+        Either one plus the default secret is a hard error at construction, so
+        the container exits instead of serving forgeable sessions. Local and
+        LAN development (http base_url, COOKIE_SECURE unset) is untouched, and
+        so is the whole test suite.
+        """
+        if self.session_secret.get_secret_value() != DEV_SESSION_SECRET:
+            return self
+        reasons = []
+        if self.cookie_secure:
+            reasons.append("COOKIE_SECURE=true")
+        if self.base_url.strip().lower().startswith("https://"):
+            reasons.append("BASE_URL is https")
+        if not reasons:
+            return self
+        raise ValueError(
+            "SESSION_SECRET is still the shipped development default, but "
+            f"this looks like a production deployment ({' and '.join(reasons)}). "
+            "That key is public, so session cookies signed with it can be "
+            "forged by anyone. Set SESSION_SECRET to a long random string, "
+            "e.g. `python -c \"import secrets; print(secrets.token_urlsafe(48))\"`. "
+            "Rotating it signs every existing session out, which is the "
+            "correct outcome here."
+        )
 
     @property
     def google_oauth_enabled(self) -> bool:

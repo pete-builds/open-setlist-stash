@@ -125,6 +125,7 @@ from setlist_stash.predictions import (
     insert_prediction,
     normalize_picks,
 )
+from setlist_stash.security_headers import build_security_headers
 
 logger = logging.getLogger("setlist_stash.server")
 
@@ -563,6 +564,16 @@ def build_app(
         https_only=cfg.cookie_secure,
     )
 
+    # Response security headers (CSP, framing, referrer, HSTS). Registered
+    # LAST so it runs OUTERMOST: Starlette applies http middleware in reverse
+    # registration order, so this wraps everything below it and stamps the
+    # headers onto rate-limit 429s, static files, and error responses too, not
+    # just the routes that happen to return normally. Policy lives in
+    # security_headers.py; see that module for why each origin is allowed.
+    security_header_values = (
+        build_security_headers(cfg) if cfg.security_headers else {}
+    )
+
     # Per-IP rate limit, scoped to the public /mcp proxy ONLY. The game UI,
     # static assets, and every other route are never touched by this middleware.
     @app.middleware("http")
@@ -580,6 +591,18 @@ def build_app(
             )
         resp: Response = await call_next(request)
         return resp
+
+    if security_header_values:
+
+        @app.middleware("http")
+        async def _security_headers(request: Request, call_next: Any) -> Response:
+            resp: Response = await call_next(request)
+            # setdefault, not assignment: an operator fronting this with a
+            # proxy that already sets a policy keeps theirs rather than
+            # silently getting two intersecting CSPs.
+            for name, value in security_header_values.items():
+                resp.headers.setdefault(name, value)
+            return resp
 
     if _STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

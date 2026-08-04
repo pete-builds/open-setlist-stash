@@ -2,7 +2,57 @@
 
 from __future__ import annotations
 
-from setlist_stash.config import Settings
+import pytest
+from pydantic import ValidationError
+
+from setlist_stash.config import DEV_SESSION_SECRET, Settings
+
+
+class TestDefaultSessionSecretIsFailClosed:
+    """The shipped signing key must not survive contact with production.
+
+    SESSION_SECRET signs the identity cookie. Its default is published in this
+    repo and baked into every ghcr.io image, so keeping it on a public
+    deployment means anyone can forge a session for any user id, silently.
+    """
+
+    def test_https_base_url_with_the_default_secret_refuses_to_construct(
+        self,
+    ) -> None:
+        with pytest.raises(ValidationError) as excinfo:
+            Settings(base_url="https://picks.example.com")
+        assert "SESSION_SECRET" in str(excinfo.value)
+        assert "BASE_URL is https" in str(excinfo.value)
+
+    def test_cookie_secure_with_the_default_secret_refuses_to_construct(
+        self,
+    ) -> None:
+        with pytest.raises(ValidationError) as excinfo:
+            Settings(cookie_secure=True)
+        assert "COOKIE_SECURE=true" in str(excinfo.value)
+
+    def test_error_names_both_signals_when_both_are_set(self) -> None:
+        with pytest.raises(ValidationError) as excinfo:
+            Settings(cookie_secure=True, base_url="https://picks.example.com")
+        message = str(excinfo.value)
+        assert "COOKIE_SECURE=true and BASE_URL is https" in message
+
+    def test_a_real_secret_boots_fine_on_https(self) -> None:
+        cfg = Settings(
+            session_secret="a-real-long-random-value",  # type: ignore[arg-type]
+            cookie_secure=True,
+            base_url="https://picks.example.com",
+        )
+        assert cfg.cookie_secure is True
+
+    def test_local_http_development_is_untouched(self) -> None:
+        # The whole point: `docker compose up` out of the box still works.
+        cfg = Settings(base_url="http://localhost:3706")
+        assert cfg.session_secret.get_secret_value() == DEV_SESSION_SECRET
+
+    def test_the_check_is_case_insensitive_on_the_scheme(self) -> None:
+        with pytest.raises(ValidationError):
+            Settings(base_url="HTTPS://picks.example.com")
 
 
 class TestSiteDescription:
