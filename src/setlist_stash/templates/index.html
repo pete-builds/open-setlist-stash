@@ -112,6 +112,29 @@
         {% endif %}
       {% endif %}
     </div>
+
+    {# The page a brand-new player lands on the instant they claim a handle
+       (POST /handle redirects here). Their whole identity is one cookie in one
+       browser at that point, so this is the moment the "save it" offer is
+       worth making, and it has to be a real button rather than the muted
+       footnote it used to be. Sits below the picks CTA so it never competes
+       with getting straight into the game. Disappears for good once linked. #}
+    {% if google_oauth_enabled and not current_user.has_google %}
+    <div class="card save-account">
+      <h2 class="save-account-title">Keep this handle on every device</h2>
+      <p>
+        <strong>{{ current_user.handle }}</strong> currently lives in this
+        browser only. Connect Google and your picks, scores, and leaderboard
+        spot follow you to your phone, and survive clearing your cookies.
+      </p>
+      {% with google_label = "Connect with Google" %}
+        {% include "_google_button.html" %}
+      {% endwith %}
+      <p class="save-account-help muted">
+        Takes a few seconds. Your handle stays exactly as it is.
+      </p>
+    </div>
+    {% endif %}
   {% else %}
     {# Single hero CTA. A handle is required before you can pick, so lead with
        it: the handle input + "Start playing" IS the primary call to action.
@@ -129,11 +152,20 @@
       {% endif %}
       <p class="handle-cta-help muted">Anonymous play. {{ handle_help }}</p>
     </form>
+    {# Second way in, given real visual weight beside the handle form: a
+       returning player signs straight back into their existing account, and a
+       new one can skip the anonymous stage entirely. Was a muted one-line
+       link, which nobody saw. #}
     {% if google_oauth_enabled %}
-    <p class="muted">
-      Or <a href="/auth/google/start">sign in with Google</a> to carry your
-      account across devices.
-    </p>
+    <div class="auth-alt">
+      <p class="auth-or"><span>or</span></p>
+      {% with google_label = "Continue with Google" %}
+        {% include "_google_button.html" %}
+      {% endwith %}
+      <p class="auth-alt-help muted">
+        Signs you in on any device and keeps your handle safe.
+      </p>
+    </div>
     {% endif %}
     {% if email_enabled %}
     <p class="muted">

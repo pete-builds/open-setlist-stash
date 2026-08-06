@@ -1341,7 +1341,103 @@ table.stat-table tbody tr:last-child td { border-bottom: 0; }
 .home-how h2 { text-align: center; }
 .home-how .how-it-works-steps { text-align: center; }
 
+/* ---- Sign in with Google ---------------------------------------------
+   Deliberately opts OUT of the per-brand poster themes. Those themes load
+   after this file and rewrite .btn wholesale (uppercase Anton, orange field,
+   hard offset shadow, a "✦" glyph via ::after), which would leave the Google
+   button unrecognizable. Google's mark on a white field IS the recognition,
+   so the rules below are written as `a.btn.btn-google` (0,2,1) to outrank
+   both the themes' `.btn` (0,1,0) and their `.btn + .btn` (0,2,0), wherever
+   the button lands among its siblings. */
+a.btn.btn-google {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  background: #fff;
+  color: #1f1f1f;
+  border: 1px solid #747775;
+  border-radius: var(--radius);
+  padding: 0.7rem 1.5rem;
+  font-family: "IBM Plex Sans", Roboto, -apple-system, sans-serif;
+  font-weight: 600;
+  font-size: 1rem;
+  letter-spacing: 0;
+  text-transform: none;
+  text-decoration: none;
+  box-shadow: var(--shadow-sm);
+  transform: none;
+  /* Symmetric, unlike the .btn margin both the base and poster themes set
+     (which carries a right margin only). Inside the centered .save-account
+     card that asymmetry would leave the button visibly off-centre. */
+  margin: 0.85rem 0 0.5rem;
+}
+/* Drop the poster themes' decorative ::after glyph: Google's guidelines
+   don't allow extra ornament inside the button. */
+a.btn.btn-google::after,
+a.btn.btn-google:hover::after { content: ""; margin: 0; }
+a.btn.btn-google:hover {
+  background: #f2f2f2;
+  color: #1f1f1f;
+  border-color: #5f6368;
+  transform: none;
+  box-shadow: var(--shadow);
+}
+a.btn.btn-google:active {
+  transform: none;
+  box-shadow: var(--shadow-sm);
+}
+a.btn.btn-google:focus-visible {
+  outline: 3px solid #4285f4;
+  outline-offset: 2px;
+}
+a.btn.btn-google .google-g {
+  width: 1.15em;
+  height: 1.15em;
+  flex: 0 0 auto;
+}
+
+/* "or" rule separating the handle form from the Google button on the
+   anonymous home page. The rules either side are drawn by pseudo-elements so
+   the markup stays a single <p>. */
+.auth-alt { margin: 1.2rem 0 0; }
+.auth-or {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 0.9rem;
+  color: var(--text-mute);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.auth-or::before,
+.auth-or::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+}
+.auth-alt-help { margin: 0.6rem 0 0; }
+
+/* Post-signup "save your account" card. A player who just claimed a handle is
+   one cleared cookie away from losing it, so this gets an accent edge and a
+   real button rather than reading as another muted footnote. */
+.save-account {
+  margin: 0.5rem 0 1.2rem;
+  text-align: center;
+  border-left: 4px solid var(--accent);
+}
+.save-account-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+.save-account-help { margin: 0.6rem 0 0; font-size: 0.85rem; }
+
 @media (max-width: 480px) {
   .handle-cta-row { flex-direction: column; }
   .handle-cta-row .btn { width: 100%; }
+  /* Full-bleed tap target on phones, where this button matters most. */
+  a.btn.btn-google { display: flex; width: 100%; }
 }

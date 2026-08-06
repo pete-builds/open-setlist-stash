@@ -41,6 +41,12 @@ class HandleError(ValueError):
 class CurrentUser:
     id: int
     handle: str
+    # True once a Google account is linked to this row. Templates read it to
+    # decide whether to show the "save your account" nudge: a handle-only
+    # player lives entirely in one browser cookie, and on deployments with
+    # email disabled Google is the ONLY way back in. Defaults False so callers
+    # that build a bare identity (tests, fixtures) stay valid.
+    has_google: bool = False
 
 
 def _serializer(settings: Settings) -> URLSafeSerializer:
@@ -130,11 +136,15 @@ async def get_user_by_id(
 ) -> CurrentUser | None:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, handle FROM users WHERE id = $1", user_id
+            "SELECT id, handle, google_sub FROM users WHERE id = $1", user_id
         )
     if row is None:
         return None
-    return CurrentUser(id=int(row["id"]), handle=str(row["handle"]))
+    return CurrentUser(
+        id=int(row["id"]),
+        handle=str(row["handle"]),
+        has_google=row["google_sub"] is not None,
+    )
 
 
 async def touch_last_seen(pool: asyncpg.Pool[Any], user_id: int) -> None:

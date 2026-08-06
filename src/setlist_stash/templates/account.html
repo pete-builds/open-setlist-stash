@@ -43,7 +43,11 @@
         </p>
       {% else %}
         <p>Google: <em>not linked</em></p>
-        <p><a class="btn" href="/auth/google/start">Link Google</a></p>
+        <p>
+          {% with google_label = "Connect with Google" %}
+            {% include "_google_button.html" %}
+          {% endwith %}
+        </p>
         <p class="muted">
           Link your Google account to carry this handle across devices.
         </p>

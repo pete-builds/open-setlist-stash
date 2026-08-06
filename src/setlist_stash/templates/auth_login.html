@@ -5,7 +5,9 @@
 
   {% if google_oauth_enabled %}
     <p>
-      <a class="btn btn-primary" href="/auth/google/start">Sign in with Google</a>
+      {% with google_label = "Sign in with Google" %}
+        {% include "_google_button.html" %}
+      {% endwith %}
     </p>
     {% if provider_enabled %}
       <p class="muted">Or sign in with the email attached to your handle:</p>

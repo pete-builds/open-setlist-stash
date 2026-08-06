@@ -494,10 +494,6 @@ async def account_page(
     pool = get_pool()
     status_data = await get_email_status(pool, user.id)
     memberships = await list_user_leagues(pool, user.id)
-    async with pool.acquire() as conn:
-        google_sub = await conn.fetchval(
-            "SELECT google_sub FROM users WHERE id = $1", user.id
-        )
     flash = request.cookies.get("phishgame_flash")
     resp = render(
         templates,
@@ -505,7 +501,8 @@ async def account_page(
         "account.html",
         current_user=user,
         status=status_data,
-        google_linked=google_sub is not None,
+        # Already resolved on this request by ``current_user``; no second query.
+        google_linked=user.has_google,
         flash=flash,
         leagues=memberships,
     )
