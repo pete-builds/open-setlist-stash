@@ -21,8 +21,8 @@ classifiers = [
     "Topic :: Games/Entertainment",
 ]
 dependencies = [
-    "fastapi==0.140.9",
-    "uvicorn[standard]==0.51.0",
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.1",
     "jinja2==3.1.6",
     "httpx==0.28.1",
     "asyncpg==0.31.0",
@@ -32,7 +32,7 @@ dependencies = [
     "itsdangerous==2.2.0",
     "python-dotenv==1.2.2",
     "aiosmtplib==5.1.2",
-    "markdown==3.10.2",
+    "markdown==3.10.3",
     "authlib==1.7.2",
 ]
 
@@ -42,7 +42,7 @@ dev = [
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "respx==0.23.1",
-    "ruff==0.16.0",
+    "ruff==0.16.1",
     "mypy==2.3.0",
 ]
 
