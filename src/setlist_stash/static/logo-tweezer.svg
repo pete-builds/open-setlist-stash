@@ -1,4 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Tweezer Picks">
-  <rect x="0" y="0" width="100" height="100" rx="18" fill="#d6691f"/>
-  <path d="M12 18H88V40H61V86H39V40H12Z" fill="#f4e6cc"/>
+  <defs>
+    <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="12" x2="0" y2="88">
+      <stop offset="0%" stop-color="#FFFFB2"/>
+      <stop offset="20%" stop-color="#FFFF8C"/>
+      <stop offset="48%" stop-color="#FFC753"/>
+      <stop offset="68%" stop-color="#FF7A5E"/>
+      <stop offset="100%" stop-color="#FF3EAF"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="100" height="100" rx="18" fill="#3A2520"/>
+  <rect x="8" y="12" width="84" height="36" rx="7" fill="url(#g)"/>
+  <rect x="35" y="12" width="30" height="76" rx="7" fill="url(#g)"/>
 </svg>
