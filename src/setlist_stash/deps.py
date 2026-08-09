@@ -57,6 +57,14 @@ def build_templates(cfg: Settings, provider: EmailProvider) -> Jinja2Templates:
     # band's name into another deployment's og:description.
     templates.env.globals["site_description"] = cfg.site_description_effective
     templates.env.globals["theme_file"] = cfg.theme_file
+    # Icon + social-card artwork. Deployment-level, for the same reason as
+    # site_description: the shared image serves several tenants and must not
+    # bake one of them's mark into all of them.
+    templates.env.globals["favicon_svg"] = cfg.favicon_svg
+    templates.env.globals["favicon_ico"] = cfg.favicon_ico
+    templates.env.globals["favicon_png"] = cfg.favicon_png
+    templates.env.globals["apple_touch_icon"] = cfg.apple_touch_icon
+    templates.env.globals["og_image"] = cfg.og_image
     # Content hash of the CSS, appended as ``?v=`` to the static stylesheet
     # links so a styling change is a fresh URL at the Cloudflare edge.
     templates.env.globals["asset_version"] = _compute_asset_version(cfg.theme_file)
