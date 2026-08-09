@@ -45,6 +45,9 @@ GRADIENT = [
 PAPER = (0xF9, 0xEC, 0xD5)
 INK = (0x3A, 0x25, 0x20)   # --ink, the theme's warm near-black
 GOLD = (0xE9, 0xA8, 0x32)  # --gold
+CREAM_POP = (0xF0, 0xD9, 0xB8)  # --cream-pop
+ORANGE = (0xD6, 0x69, 0x1F)     # --orange
+BRICK = (0xB0, 0x3D, 0x1A)      # --brick
 RULE = (0xC8, 0xAD, 0x85)
 BLACK = (0x00, 0x00, 0x00)
 
@@ -313,6 +316,7 @@ def render_mark(size: int, variant: str = "glyph_only",
 
 # --- Social card -------------------------------------------------------------
 OG_W, OG_H = 1200, 630
+_RULE_K = 3  # the CSS rule is authored at 18px/6px for a browser topbar
 # The tagline is the only text not drawn from outlines, so it needs a real
 # font file. Candidates cover macOS and common Linux/CI images; Pillow's
 # bitmap default is the last resort so a regeneration never hard-fails on a
@@ -341,11 +345,17 @@ def render_og(taglines: list[str]) -> Image.Image:
     img = Image.new("RGB", (OG_W, OG_H), PAPER)
     d = ImageDraw.Draw(img)
 
-    band_h = 18
-    for x in range(0, OG_W, 60):
-        colour = [GRADIENT[3][1], GRADIENT[0][1], GOLD, INK][(x // 60) % 4]
-        d.rectangle([x, 0, x + 60, band_h], fill=colour)
-        d.rectangle([x, OG_H - band_h, x + 60, OG_H], fill=colour)
+    # The site's .topbar::after stripe: gold, cream-pop, orange, brick, cycling
+    # at 18px. Scaled 3x here because the card is a poster, not a 1:1 screenshot
+    # of the header. Deliberately NOT the Honk gradient's amber and pink: those
+    # belong to the glyph, and borrowing them invents a palette the site never
+    # uses.
+    band_h = 6 * _RULE_K
+    seg = 18 * _RULE_K
+    cycle = [GOLD, CREAM_POP, ORANGE, BRICK]
+    for i, x in enumerate(range(0, OG_W, seg)):
+        d.rectangle([x, 0, x + seg, band_h], fill=cycle[i % 4])
+        d.rectangle([x, OG_H - band_h, x + seg, OG_H], fill=cycle[i % 4])
     d.rectangle([36, band_h + 22, OG_W - 36, OG_H - band_h - 22],
                 outline=RULE, width=3)
 
