@@ -1,20 +1,22 @@
 """Generate the Tweezer Picks brand mark: favicon set + social card.
 
-Single-sources the geometry so the shipped SVG and the rasters cannot drift.
-The SVG is emitted as plain rects/paths with NO font reference: a favicon is
-rendered by browsers, OS docks and link unfurlers on machines that will not
-have the site's display face installed, so a font-name reference would render
-differently or not at all.
+The mark is the real Honk "T", not an approximation. The header wordmark is
+set in Honk, a COLRv1 *chromatic* font: it carries its own colour layers inside
+the font binary and paints them regardless of the CSS ``color`` property, which
+is why ``lot-poster.css`` setting ``color: var(--orange)`` on ``.brand`` never
+renders and why reading the stylesheet gives a confidently wrong answer.
 
-PALETTE PROVENANCE, and why the stylesheet alone was not enough. The header
-wordmark is set in Honk, which is a COLRv1 *chromatic* font: it carries its
-own colour layers inside the font binary and paints them regardless of the
-CSS ``color`` property. So ``lot-poster.css`` setting ``color: var(--orange)``
-on ``.brand`` is dead code, and reading the stylesheet gives a confidently
-wrong answer. The glyph is actually a vertical yellow-to-magenta gradient
-with a heavy black outline. The values below were sampled pixel-by-pixel from
-a screenshot of the live header. The ``text-shadow`` layers in the CSS are
-real and do render, so those two colours come from the stylesheet.
+Source artwork lives in ``scripts/brand/*.svg``: the glyph and the wordmark
+rendered to vector outlines with the colour layers resolved. Those files are
+the input, so THIS SCRIPT NEEDS NO FONT, NO NETWORK AND NO EXTRA PACKAGES, and
+regenerating is deterministic offline and in CI. Pillow is the only dependency,
+and it cannot parse SVG, so the small path reader below flattens the outlines
+and fills them directly.
+
+Honk: Copyright 2023 The Honk Project Authors (https://github.com/EkType/Honk),
+SIL Open Font License 1.1 (https://scripts.sil.org/OFL). Shipping rendered
+artwork is fine under the OFL, the same as converting text to outlines. The
+font binary is deliberately not vendored here.
 
 Run from the repo root:
     python3 scripts/make_brand_assets.py
@@ -26,210 +28,312 @@ from __future__ import annotations
 
 import itertools
 import pathlib
+import re
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-# --- Sampled from the live header (see module docstring) ---------------------
-# Vertical gradient across the glyph face, top to bottom.
+# --- Palette, read from the font's own CPAL table (palette 0) ----------------
+# The glyph gradient is defined bottom-to-top in font space (y-up).
 GRADIENT = [
-    (0.00, (0xFF, 0xFF, 0xB2)),  # pale-yellow highlight on the very top edge
-    (0.20, (0xFF, 0xFF, 0x8C)),
-    (0.48, (0xFF, 0xC7, 0x53)),  # amber
-    (0.68, (0xFF, 0x7A, 0x5E)),  # coral
-    (1.00, (0xFF, 0x3E, 0xAF)),  # hot pink
+    (0.00, (0xFF, 0x46, 0xAF)),  # bottom: hot pink
+    (0.20, (0xFF, 0x3C, 0xAF)),
+    (0.40, (0xFF, 0x75, 0x5F)),  # coral
+    (0.60, (0xFF, 0xC7, 0x53)),  # amber
+    (0.80, (0xFF, 0xFF, 0x78)),
+    (1.00, (0xFF, 0xFF, 0xB2)),  # top: pale yellow
 ]
-OUTLINE = (0x00, 0x00, 0x00)
 PAPER = (0xF9, 0xEC, 0xD5)
-INK = (0x3A, 0x25, 0x20)   # --ink, first text-shadow layer
-GOLD = (0xE9, 0xA8, 0x32)  # --gold, second text-shadow layer
+INK = (0x3A, 0x25, 0x20)   # --ink, the theme's warm near-black
+GOLD = (0xE9, 0xA8, 0x32)  # --gold
 RULE = (0xC8, 0xAD, 0x85)
+BLACK = (0x00, 0x00, 0x00)
 
-STATIC = pathlib.Path(__file__).resolve().parent.parent / "src/setlist_stash/static"
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+STATIC = ROOT / "src/setlist_stash/static"
+BRAND = ROOT / "scripts/brand"
 
-# --- Mark geometry, in a 100x100 unit square ---------------------------------
-# A chunky, inflated slab T built as the union of two rounded rectangles. This
-# is an original letterform in the spirit of Honk, NOT a trace: the font is not
-# available here, and a bad trace reads worse than a clean original.
-BAR = (8.0, 12.0, 92.0, 48.0)    # crossbar: x0, y0, x1, y1
-STEM = (35.0, 12.0, 65.0, 88.0)  # stem
-CORNER = 7.0
-
-
-def _hex(rgb: tuple[int, int, int]) -> str:
-    return "#{:02X}{:02X}{:02X}".format(*rgb)
-
-
-def _lerp(a: int, b: int, t: float) -> int:
-    return round(a + (b - a) * t)
+# --- Minimal SVG path reader -------------------------------------------------
+# Handles exactly the command set the exported outlines use: M (absolute
+# moveto), h / v / l / q (relative), Z. Deliberately not a general SVG parser.
+_TOKEN = re.compile(r"[MmZzLlHhVvQq]|-?\d*\.?\d+(?:e-?\d+)?")
+_QUAD_STEPS = 8   # flattening resolution; the outlines are all quadratics
+_FLAT_EPS = 1.0   # font units: below this a quadratic is treated as a line
+_DEDUPE_EPS = 0.25
 
 
-def gradient_at(t: float) -> tuple[int, int, int]:
-    """Colour at position `t` (0 top, 1 bottom) along the glyph gradient."""
-    t = min(max(t, 0.0), 1.0)
-    for (p0, c0), (p1, c1) in itertools.pairwise(GRADIENT):
-        if t <= p1:
-            k = 0.0 if p1 == p0 else (t - p0) / (p1 - p0)
-            return (_lerp(c0[0], c1[0], k), _lerp(c0[1], c1[1], k),
-                    _lerp(c0[2], c1[2], k))
-    return GRADIENT[-1][1]
+def _push(pts: list, pt: tuple[float, float]) -> None:
+    """Append unless it repeats the previous point."""
+    if pts and abs(pts[-1][0] - pt[0]) < _DEDUPE_EPS \
+            and abs(pts[-1][1] - pt[1]) < _DEDUPE_EPS:
+        return
+    pts.append(pt)
 
 
-def svg_markup() -> str:
-    """The scalable mark, matching the chosen raster variant.
+def _parse_path(d: str) -> list[list[tuple[float, float]]]:
+    """Flatten a path's ``d`` into closed polygons, one per subpath."""
+    toks = _TOKEN.findall(d)
+    subpaths: list[list[tuple[float, float]]] = []
+    cur: list[tuple[float, float]] = []
+    x = y = 0.0
+    i = 0
+    cmd = ""
+    while i < len(toks):
+        t = toks[i]
+        if t.isalpha():
+            cmd = t
+            i += 1
+            if cmd in "Zz":
+                if len(cur) > 2:
+                    subpaths.append(cur)
+                cur = []
+                continue
+        def n(k: int, _i: int = i) -> float:
+            return float(toks[_i + k])
 
-    Ink tile plus gradient glyph, no font reference and no black outline (see
-    render_mark for why the outline is dropped).
+        if cmd == "M":
+            if len(cur) > 2:
+                subpaths.append(cur)
+            x, y = n(0), n(1)
+            cur = [(x, y)]
+            i += 2
+            cmd = "L"  # implicit repeats after M are linetos
+        elif cmd == "m":
+            if len(cur) > 2:
+                subpaths.append(cur)
+            x, y = x + n(0), y + n(1)
+            cur = [(x, y)]
+            i += 2
+            cmd = "l"
+        elif cmd in "Ll":
+            x, y = (n(0), n(1)) if cmd == "L" else (x + n(0), y + n(1))
+            _push(cur, (x, y))
+            i += 2
+        elif cmd in "Hh":
+            x = n(0) if cmd == "H" else x + n(0)
+            _push(cur, (x, y))
+            i += 1
+        elif cmd in "Vv":
+            y = n(0) if cmd == "V" else y + n(0)
+            _push(cur, (x, y))
+            i += 1
+        elif cmd in "Qq":
+            if cmd == "Q":
+                cx, cy, ex, ey = n(0), n(1), n(2), n(3)
+            else:
+                cx, cy, ex, ey = x + n(0), y + n(1), x + n(2), y + n(3)
+            # The export emits a great many degenerate quadratics (control and
+            # both ends coincident, or the control exactly on the chord).
+            # Flattening those to _QUAD_STEPS identical points bloats the
+            # shipped SVG by an order of magnitude for no visual gain.
+            area = abs((cx - x) * (ey - y) - (cy - y) * (ex - x))
+            if area < _FLAT_EPS:
+                _push(cur, (ex, ey))
+            else:
+                for k in range(1, _QUAD_STEPS + 1):
+                    u = k / _QUAD_STEPS
+                    m = 1 - u
+                    _push(cur, (m * m * x + 2 * m * u * cx + u * u * ex,
+                                m * m * y + 2 * m * u * cy + u * u * ey))
+            x, y = ex, ey
+            i += 4
+        else:  # unknown command: stop rather than silently mis-draw
+            raise ValueError(f"unsupported path command {cmd!r}")
+    if len(cur) > 2:
+        subpaths.append(cur)
+    return subpaths
+
+
+def _matrix(spec: str) -> tuple[float, ...]:
+    return tuple(float(v) for v in spec[spec.index("(") + 1: spec.index(")")].split(","))
+
+
+def load_layers(name: str) -> tuple[list[tuple[str, list]], tuple[float, ...]]:
+    """Read an outline SVG into (fill_kind, polygons) layers, in paint order.
+
+    ``fill_kind`` is "black" or "gradient"; the exported gradient_0 is a
+    black-to-black ramp, i.e. flat black.
     """
-    stops = "".join(
-        f'\n      <stop offset="{p * 100:g}%" stop-color="{_hex(c)}"/>'
-        for p, c in GRADIENT
+    svg = (BRAND / name).read_text()
+    vb = tuple(
+        float(v)
+        for v in re.search(r'viewBox="([^"]+)"', svg).group(1).split()
     )
-    glyph = "".join(
-        f'\n  <rect x="{x0:g}" y="{y0:g}" width="{x1 - x0:g}"'
-        f' height="{y1 - y0:g}" rx="{CORNER:g}" fill="url(#g)"/>'
-        for x0, y0, x1, y1 in (BAR, STEM)
-    )
-    return (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"'
-        ' width="100" height="100" role="img" aria-label="Tweezer Picks">\n'
-        "  <defs>\n"
-        '    <linearGradient id="g" gradientUnits="userSpaceOnUse"'
-        f' x1="0" y1="{BAR[1]:g}" x2="0" y2="{STEM[3]:g}">{stops}\n'
-        "    </linearGradient>\n"
-        "  </defs>\n"
-        f'  <rect x="0" y="0" width="100" height="100" rx="18"'
-        f' fill="{_hex(INK)}"/>'
-        + glyph
-        + "\n</svg>\n"
-    )
+    layers = []
+    for d, grad, tf in re.findall(
+        r'<path d="([^"]+)"[^>]*fill="url\(#([^)]+)\)"[^>]*transform="([^"]+)"',
+        svg,
+    ):
+        a, b, c, dd, e, f = _matrix(tf)
+        polys = [
+            [(a * px + c * py + e, b * px + dd * py + f) for px, py in sub]
+            for sub in _parse_path(d)
+        ]
+        layers.append(("black" if grad == "gradient_0" else "gradient", polys))
+    return layers, vb
 
 
-# --- Raster rendering --------------------------------------------------------
-SS = 8  # supersample factor; a gradient plus an outline cannot be pixel-snapped
+def _bbox(layers: list[tuple[str, list]], kinds: set[str]) -> tuple[float, ...]:
+    xs, ys = [], []
+    for kind, polys in layers:
+        if kind not in kinds:
+            continue
+        for p in polys:
+            xs += [q[0] for q in p]
+            ys += [q[1] for q in p]
+    return min(xs), min(ys), max(xs), max(ys)
 
 
-def _shape_mask(px: int, inset_units: float) -> Image.Image:
-    """8-bit mask of the T, optionally inflated by `inset_units` (0-100 space)."""
-    m = Image.new("L", (px, px), 0)
-    d = ImageDraw.Draw(m)
-    for x0, y0, x1, y1 in (BAR, STEM):
-        d.rounded_rectangle(
-            [(x0 - inset_units) / 100 * px, (y0 - inset_units) / 100 * px,
-             (x1 + inset_units) / 100 * px, (y1 + inset_units) / 100 * px],
-            radius=(CORNER + inset_units) / 100 * px,
-            fill=255,
-        )
-    return m
-
-
-def _gradient_image(w: int, h: int, top_px: float, bot_px: float,
-                    stops: list | None = None) -> Image.Image:
-    """Vertical gradient sized `w` x `h`, ramping between two PIXEL rows.
+def _gradient_image(w: int, h: int, top_px: float, bot_px: float) -> Image.Image:
+    """Vertical gradient ramping between two PIXEL rows.
 
     Bounds are pixels rather than a normalised square: building a square and
     resizing it to a wide box squashes the ramp, which silently flattened the
-    wordmark to its end colour.
+    wordmark to a single colour.
     """
     img = Image.new("RGB", (w, h))
     d = ImageDraw.Draw(img)
     for y in range(h):
-        t = (y - top_px) / max(bot_px - top_px, 1e-6)
-        if stops is not None:
-            t = min(max(t, 0.0), 1.0)
-            c = tuple(_lerp(stops[0][i], stops[1][i], t) for i in range(3))
+        t = 1.0 - (y - top_px) / max(bot_px - top_px, 1e-6)  # y-down vs y-up
+        t = min(max(t, 0.0), 1.0)
+        for (p0, c0), (p1, c1) in itertools.pairwise(GRADIENT):
+            if t <= p1:
+                k = 0.0 if p1 == p0 else (t - p0) / (p1 - p0)
+                c = tuple(round(c0[j] + (c1[j] - c0[j]) * k) for j in range(3))
+                break
         else:
-            c = gradient_at(t)
+            c = GRADIENT[-1][1]
         d.line([(0, y), (w, y)], fill=c)
     return img
 
 
-def render_mark(size: int, variant: str = "no_outline_ink") -> Image.Image:
-    """The mark at `size` px.
+def glyph_bbox_user(layers: list[tuple[str, list]], probe: int = 900
+                    ) -> tuple[float, float, float, float]:
+    """Bounds of the visible LETTERFORM in user space.
 
-    The default drops the header's black outline and sets the glyph on an ink
-    tile. Chosen by rendering the candidates and looking at them at actual size
-    against a paper background, which is where the alternatives failed: a paper
-    tile has no edge against light browser chrome, so the mark dissolves into
-    the page instead of reading as an icon. On an ink tile the black outline is
-    both invisible and redundant, because the tile already does the containing.
-    The other variants are kept selectable so this comparison can be redone.
+    The letter is the gradient field minus the carve path, which has no closed
+    form, so it is measured by rasterising a probe and mapping the result back.
+    """
+    x0, y0, x1, y1 = _bbox(layers, {"gradient"})
+    s = probe / max(x1 - x0, y1 - y0)
+    field = _fill((probe, probe), next(p for k, p in layers if k == "gradient"),
+                  s, s, x0, y0)
+    carve = _fill((probe, probe), [p for k, p in layers if k == "black"][-1],
+                  s, s, x0, y0)
+    bb = ImageChops.subtract(field, carve).getbbox()
+    return (x0 + bb[0] / s, y0 + bb[1] / s, x0 + bb[2] / s, y0 + bb[3] / s)
+
+
+def _fill(size: tuple[int, int], polys: list, sx: float, sy: float,
+          ox: float, oy: float) -> Image.Image:
+    """Mask of `polys` mapped into `size` by scale/offset."""
+    m = Image.new("L", size, 0)
+    d = ImageDraw.Draw(m)
+    for p in polys:
+        d.polygon([((q[0] - ox) * sx, (q[1] - oy) * sy) for q in p], fill=255)
+    return m
+
+
+def render_outline_art(name: str, w: int, h: int, pad: float = 0.0,
+                       variant: str = "full", bg: tuple | None = None,
+                       ) -> Image.Image:
+    """Composite an outline SVG's layers into a `w` x `h` RGBA image.
+
+    Variants exist because the extrusion and the letterform's narrow slots do
+    not survive a 16px tile; see the candidate comparison in the commit message.
+      full         extrusion, gradient field, carve  (the true rendering)
+      no_extrusion gradient field and carve, no 3D drop
+      glyph_only   just the letterform, filled with the gradient
+    """
+    layers, _ = load_layers(name)
+    # Fit on the ink actually drawn: including the extrusion when it is painted
+    # keeps the 3D drop inside the tile instead of letting it run off the edge.
+    kinds = {"black", "gradient"} if variant == "full" else {"gradient"}
+    x0, y0, x1, y1 = _bbox(layers, kinds)
+    aw, ah = w * (1 - pad * 2), h * (1 - pad * 2)
+    s = min(aw / (x1 - x0), ah / (y1 - y0))
+    ox = x0 - (w - (x1 - x0) * s) / 2 / s
+    oy = y0 - (h - (y1 - y0) * s) / 2 / s
+
+    img = Image.new("RGBA", (w, h), (*bg, 255) if bg else (0, 0, 0, 0))
+    gb = _bbox(layers, {"gradient"})
+    grad = _gradient_image(w, h, (gb[1] - oy) * s, (gb[3] - oy) * s)
+
+    if variant == "glyph_only":
+        # The letterform is the gradient field MINUS the black path that carves
+        # it. Painting the field alone just yields a filled rectangle.
+        field = _fill((w, h), next(p for k, p in layers if k == "gradient"),
+                      s, s, ox, oy)
+        carve = _fill((w, h), [p for k, p in layers if k == "black"][-1],
+                      s, s, ox, oy)
+        img.paste(grad, (0, 0), ImageChops.subtract(field, carve))
+        return img
+
+    for idx, (kind, polys) in enumerate(layers):
+        if variant == "no_extrusion" and idx == 0:
+            continue  # layer 0 is the 3D extrusion
+        img.paste(grad if kind == "gradient" else BLACK, (0, 0),
+                  _fill((w, h), polys, s, s, ox, oy))
+    return img
+
+
+def _rounded(img: Image.Image, radius_frac: float = 0.18) -> Image.Image:
+    m = Image.new("L", img.size, 0)
+    ImageDraw.Draw(m).rounded_rectangle(
+        [0, 0, img.width - 1, img.height - 1],
+        radius=radius_frac * img.width, fill=255)
+    out = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    out.paste(img, (0, 0), m)
+    return out
+
+
+SS = 8  # supersample: an outline fill cannot be pixel-snapped
+
+
+def render_mark(size: int, variant: str = "glyph_only",
+                tile: tuple = INK, pad: float = 0.15) -> Image.Image:
+    """The icon mark: the Honk T on a tile.
+
+    The art is rendered transparent, cropped to its own ink, then centred, so
+    the letterform fills the tile regardless of variant. Fitting to the source
+    artboard instead would leave the glyph swimming in the rectangle's margins.
     """
     px = size * SS
-    two_stop = [GRADIENT[1][1], GRADIENT[-1][1]]
+    art = render_outline_art("honk-T.svg", px, px, variant=variant)
+    art = art.crop(art.getbbox())
+    inner = round(px * (1 - pad * 2))
+    s = min(inner / art.width, inner / art.height)
+    art = art.resize((max(1, round(art.width * s)),
+                      max(1, round(art.height * s))), Image.LANCZOS)
 
-    if variant == "outline_paper":
-        tile, stops, outline = PAPER, None, True
-    elif variant == "no_outline_ink":
-        tile, stops, outline = INK, None, False
-    elif variant == "two_stop":
-        tile, stops, outline = INK, two_stop, False
-    elif variant == "two_stop_outline":
-        tile, stops, outline = PAPER, two_stop, True
-    else:
-        raise ValueError(f"unknown variant {variant!r}")
-
-    img = Image.new("RGB", (px, px), tile)
-    if outline:
-        img.paste(OUTLINE, (0, 0), _shape_mask(px, 3.0))
-    img.paste(
-        _gradient_image(px, px, BAR[1] / 100 * px, STEM[3] / 100 * px, stops),
-        (0, 0), _shape_mask(px, 0.0))
-
-    out = img.resize((size, size), Image.LANCZOS)
-    # Round the tile itself only where it is big enough to read as a corner.
-    if size >= 48:
-        rounded = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        corner = Image.new("L", (px, px), 0)
-        ImageDraw.Draw(corner).rounded_rectangle(
-            [0, 0, px - 1, px - 1], radius=0.18 * px, fill=255
-        )
-        rounded.paste(out, (0, 0), corner.resize((size, size), Image.LANCZOS))
-        return rounded
-    return out.convert("RGBA")
+    canvas = Image.new("RGBA", (px, px), (*tile, 255))
+    canvas.paste(art, ((px - art.width) // 2, (px - art.height) // 2), art)
+    out = canvas.resize((size, size), Image.LANCZOS)
+    return _rounded(out) if size >= 32 else out
 
 
 # --- Social card -------------------------------------------------------------
 OG_W, OG_H = 1200, 630
-BLACK_FONT = "/System/Library/Fonts/Supplemental/Arial Black.ttf"
-BOLD_FONT = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+# The tagline is the only text not drawn from outlines, so it needs a real
+# font file. Candidates cover macOS and common Linux/CI images; Pillow's
+# bitmap default is the last resort so a regeneration never hard-fails on a
+# machine that has none of them.
+_TAG_FONTS = [
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+]
 
 
-def _fit_font(path: str, text: str, max_w: int, start: int) -> ImageFont.FreeTypeFont:
-    """Largest size at which `text` still fits `max_w`.
-
-    Measured rather than assumed: a hardcoded size silently overran the safe
-    margin and pushed the wordmark into the card's keyline.
-    """
-    size = start
-    while size > 24:
-        font = ImageFont.truetype(path, size)
-        if font.getbbox(text)[2] <= max_w:
-            return font
-        size -= 2
-    return ImageFont.truetype(path, 24)
+def _tag_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    for path in _TAG_FONTS:
+        if pathlib.Path(path).exists():
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default()
 
 
-def _wordmark(text: str, font: ImageFont.FreeTypeFont, pad: int = 40
-              ) -> Image.Image:
-    """Wordmark with the header's full stack: gold and ink offsets, black
-    outline, gradient face. Drawn back to front, matching the live header.
-    """
-    bb = font.getbbox(text)
-    w, h = bb[2] + pad * 2, bb[3] + pad * 2
-    face = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(face).text((pad, pad), text, font=font, fill=255)
-    outline = face.filter(ImageFilter.MaxFilter(9))
-
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    img.paste(GOLD, (10, 12), outline)   # furthest offset, --gold
-    img.paste(INK, (5, 6), outline)      # --ink
-    img.paste(OUTLINE, (0, 0), outline)  # the font's own heavy black outline
-    img.paste(_gradient_image(w, h, bb[1] + pad, bb[3] + pad), (0, 0), face)
-    return img
-
-
-def render_og(title: str, taglines: list[str]) -> Image.Image:
-    """1200x630 link-unfurl card. Carries the full poster treatment.
+def render_og(taglines: list[str]) -> Image.Image:
+    """1200x630 link-unfurl card, using the real Honk wordmark.
 
     A social card is not a big favicon: it needs the wordmark and a line saying
     what the thing is, because most impressions are a thumbnail next to a URL.
@@ -239,34 +343,45 @@ def render_og(title: str, taglines: list[str]) -> Image.Image:
 
     band_h = 18
     for x in range(0, OG_W, 60):
-        colour = [GRADIENT[2][1], GRADIENT[4][1], GOLD, INK][(x // 60) % 4]
+        colour = [GRADIENT[3][1], GRADIENT[0][1], GOLD, INK][(x // 60) % 4]
         d.rectangle([x, 0, x + 60, band_h], fill=colour)
         d.rectangle([x, OG_H - band_h, x + 60, OG_H], fill=colour)
+    d.rectangle([36, band_h + 22, OG_W - 36, OG_H - band_h - 22],
+                outline=RULE, width=3)
 
-    d.rectangle(
-        [36, band_h + 22, OG_W - 36, OG_H - band_h - 22], outline=RULE, width=3
-    )
+    # Real Honk wordmark. Its own aspect ratio drives the height so it is never
+    # squashed, and the width is what keeps it inside the keyline.
+    layers, _ = load_layers("wordmark.svg")
+    _, wy0, _, wy1 = _bbox(layers, {"black", "gradient"})
+    wx0, _, wx1, _ = _bbox(layers, {"black", "gradient"})
+    word_w = 726
+    word_h = round(word_w * (wy1 - wy0) / (wx1 - wx0))
+    word = render_outline_art("wordmark.svg", word_w * 2, word_h * 2,
+                              variant="full").resize(
+        (word_w, word_h), Image.LANCZOS)
 
-    mark_size = 248
-    mark = render_mark(mark_size).rotate(
-        1.5, resample=Image.BICUBIC, expand=True
-    )
-    mark_x = 104
-    img.paste(mark, (mark_x, (OG_H - mark.height) // 2), mark)
+    # The header sets .brand with `text-shadow: 2px 2px 0 --ink, 4px 4px 0
+    # --gold` on top of the font's own extrusion. Reproduced here in the same
+    # order (gold furthest) and scaled to this wordmark's size, because without
+    # it the card reads flatter than the site it links to.
+    sil = word.getchannel("A").point(lambda v: 255 if v > 40 else 0)
+    ink_off, gold_off = round(word_h * 0.05), round(word_h * 0.10)
 
-    text_x = mark_x + mark_size + 56
-    avail_w = OG_W - text_x - 84
-    title_font = _fit_font(BLACK_FONT, title, avail_w, 104)
-    word = _wordmark(title, title_font)
-    tag_font = ImageFont.truetype(BOLD_FONT, 32)
+    tag_font = _tag_font(30)
+    tag_h = 42 * len(taglines)
+    block_h = word_h + gold_off + 30 + tag_h
+    wx = 372
+    wy = (OG_H - block_h) // 2
 
-    line_h = 44
-    block_h = word.height + line_h * len(taglines)
-    ty = (OG_H - block_h) // 2
-    img.paste(word, (text_x - 40, ty), word)
+    mark = render_mark(236)
+    img.paste(mark, (104, (OG_H - mark.height) // 2), mark)
+
+    img.paste(GOLD, (wx + gold_off, wy + gold_off), sil)
+    img.paste(INK, (wx + ink_off, wy + ink_off), sil)
+    img.paste(word, (wx, wy), word)
 
     for i, line in enumerate(taglines):
-        d.text((text_x + 3, ty + word.height + i * line_h), line,
+        d.text((wx + 10, wy + word_h + gold_off + 30 + i * 42), line,
                font=tag_font, fill=INK)
     return img
 
@@ -274,7 +389,8 @@ def render_og(title: str, taglines: list[str]) -> Image.Image:
 def main() -> None:
     STATIC.mkdir(parents=True, exist_ok=True)
 
-    (STATIC / "logo-tweezer.svg").write_text(svg_markup())
+    # Scalable mark: the real outlines on the ink tile, no font reference.
+    (STATIC / "logo-tweezer.svg").write_text(build_svg())
 
     render_mark(192).save(STATIC / "logo-tweezer-192.png")
     render_mark(512).save(STATIC / "logo-tweezer-512.png")
@@ -285,24 +401,71 @@ def main() -> None:
     # the 16px frame. The largest must be the base image: Pillow drops any
     # requested size bigger than the image it is called on.
     frames = [render_mark(s) for s in (48, 32, 16)]
-    frames[0].save(
-        STATIC / "favicon-tweezer.ico",
-        format="ICO",
-        sizes=[(16, 16), (32, 32), (48, 48)],
-        append_images=frames[1:],
-    )
+    frames[0].save(STATIC / "favicon-tweezer.ico", format="ICO",
+                   sizes=[(16, 16), (32, 32), (48, 48)],
+                   append_images=frames[1:])
 
     render_og(
-        "Tweezer Picks",
-        ["Phish setlist prediction game.", "Pick 5 before the lights go down."],
+        ["Phish setlist prediction game.", "Pick 5 before the lights go down."]
     ).save(STATIC / "og-tweezer.png")
 
-    for name in [
-        "logo-tweezer.svg", "logo-tweezer-192.png", "logo-tweezer-512.png",
-        "apple-touch-icon-tweezer.png", "favicon-tweezer.ico", "og-tweezer.png",
-    ]:
-        p = STATIC / name
-        print(f"{name:34} {p.stat().st_size:>8} bytes")
+    for name in ["logo-tweezer.svg", "logo-tweezer-192.png",
+                 "logo-tweezer-512.png", "apple-touch-icon-tweezer.png",
+                 "favicon-tweezer.ico", "og-tweezer.png"]:
+        print(f"{name:34} {(STATIC / name).stat().st_size:>8} bytes")
+
+
+def build_svg() -> str:
+    """Scalable favicon: the glyph outlines on the ink tile.
+
+    Matches the raster variant (letterform only, no extrusion) so the SVG and
+    the .ico read as the same mark.
+    """
+    layers, _ = load_layers("honk-T.svg")
+    gx0, gy0, gx1, gy1 = glyph_bbox_user(layers)
+    # Fit the LETTERFORM, not the source artboard. The gradient field is a
+    # plain rectangle much larger than the glyph, so fitting to it leaves the
+    # T swimming in margin.
+    inner = 70.0
+    s = inner / max(gx1 - gx0, gy1 - gy0)
+    ox = 50 - (gx0 + gx1) / 2 * s
+    oy = 50 - (gy0 + gy1) / 2 * s
+
+    def emit(polys: list) -> str:
+        out = []
+        for p in polys:
+            pts = " ".join(f"{q[0] * s + ox:.2f},{q[1] * s + oy:.2f}" for q in p)
+            out.append(f'<polygon points="{pts}"/>')
+        return "".join(out)
+
+    grad_layer = next(p for k, p in layers if k == "gradient")
+    carve = [p for k, p in layers if k == "black"][-1]
+    # The ramp spans the gradient FIELD, exactly as the font defines it, so the
+    # letter samples the same sub-range it does in the real rendering. Stops are
+    # emitted top-to-bottom with ascending offsets, since GRADIENT is stored
+    # bottom-to-top in font space.
+    fy0, fy1 = _bbox(layers, {"gradient"})[1], _bbox(layers, {"gradient"})[3]
+    ink = f"#{INK[0]:02X}{INK[1]:02X}{INK[2]:02X}"
+    stops = "".join(
+        f'\n      <stop offset="{(1 - p) * 100:g}%"'
+        f' stop-color="#{c[0]:02X}{c[1]:02X}{c[2]:02X}"/>'
+        for p, c in reversed(GRADIENT)
+    )
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"'
+        ' width="100" height="100" role="img" aria-label="Tweezer Picks">\n'
+        "  <defs>\n"
+        '    <linearGradient id="g" gradientUnits="userSpaceOnUse"'
+        f' x1="0" y1="{fy0 * s + oy:.2f}" x2="0" y2="{fy1 * s + oy:.2f}">{stops}\n'
+        "    </linearGradient>\n"
+        '    <clipPath id="c">\n      ' + emit(grad_layer) + "\n    </clipPath>\n"
+        "  </defs>\n"
+        f'  <rect x="0" y="0" width="100" height="100" rx="18" fill="{ink}"/>\n'
+        '  <g clip-path="url(#c)">\n'
+        '    <rect x="-20" y="-20" width="140" height="140" fill="url(#g)"/>\n'
+        f'    <g fill="{ink}">' + emit(carve) + "</g>\n"
+        "  </g>\n</svg>\n"
+    )
 
 
 if __name__ == "__main__":
