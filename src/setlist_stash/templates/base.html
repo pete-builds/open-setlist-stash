@@ -16,16 +16,19 @@
   {% endif %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <!-- Favicon + touch icon -->
-  <link rel="icon" type="image/svg+xml" href="/static/logo-t.svg">
-  <link rel="alternate icon" type="image/png" href="/static/logo-t-192.png">
-  <link rel="apple-touch-icon" href="/static/logo-t-192.png">
+  <!-- Favicon + touch icon. Filenames are deployment-level config (see
+       Settings.favicon_*): this image serves multiple tenants, so no one
+       tenant's mark may be hardcoded here. -->
+  <link rel="icon" type="image/svg+xml" href="/static/{{ favicon_svg }}">
+{% if favicon_ico %}  <link rel="icon" sizes="16x16 32x32 48x48" href="/static/{{ favicon_ico }}">
+{% endif %}  <link rel="alternate icon" type="image/png" href="/static/{{ favicon_png }}">
+  <link rel="apple-touch-icon" href="/static/{{ apple_touch_icon }}">
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="{{ site_name }}">
   <meta property="og:title" content="{% block og_title %}{{ site_name }}{% endblock %}">
   <meta property="og:description" content="{% block og_description %}{{ site_description }}{% endblock %}">
-  <meta property="og:image" content="{{ canonical_base }}/static/og-image.png">
+  <meta property="og:image" content="{{ canonical_base }}/static/{{ og_image }}">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:url" content="{{ canonical_base }}{{ request.url.path }}">
@@ -33,7 +36,7 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{{ self.og_title() }}">
   <meta name="twitter:description" content="{{ self.og_description() }}">
-  <meta name="twitter:image" content="{{ canonical_base }}/static/og-image.png">
+  <meta name="twitter:image" content="{{ canonical_base }}/static/{{ og_image }}">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   {% if theme_file and "lot-poster" in theme_file %}
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Honk&family=Anton&family=Special+Elite&family=JetBrains+Mono:wght@400;500;600;700&display=swap">

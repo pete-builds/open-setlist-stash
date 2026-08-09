@@ -46,6 +46,26 @@ class Settings(BaseSettings):
     # Path under /static/ to an additional CSS file loaded after style.css.
     # Empty disables; e.g. "themes/lot-poster.css" loads the bundled Lot Poster look.
     theme_file: str = Field(default="")
+    # --- Icons + social card (deployment-level override) ---
+    # Paths under /static/ to the site's mark. Same reasoning as
+    # SITE_DESCRIPTION above: these used to be hardcoded filenames in
+    # base.html, so every tenant of the shared image served the SAME artwork.
+    # One deployment's mark is not the platform's mark. The defaults below are
+    # the neutral platform placeholders, so a deployment that sets nothing
+    # keeps exactly what it renders today; brand artwork is opted into by
+    # naming a file here, never by overwriting the default in the image.
+    favicon_svg: str = Field(default="logo-t.svg")
+    # Multi-size .ico for clients that ignore the SVG (older browsers, some
+    # bookmark bars, link unfurlers). Empty (default) renders no link tag at
+    # all rather than pointing at a file the image may not carry.
+    favicon_ico: str = Field(default="")
+    # PNG fallback icon, used for `rel="alternate icon"`.
+    favicon_png: str = Field(default="logo-t-192.png")
+    # Home-screen icon for iOS/Android. Rendered large, so it can carry more
+    # detail than the favicon.
+    apple_touch_icon: str = Field(default="logo-t-192.png")
+    # 1200x630 social preview card (og:image / twitter:image).
+    og_image: str = Field(default="og-image.png")
     # Optional deployment credit shown in the footer (e.g. "A Brooks New Media
     # Production"). Empty (default) hides the credit line entirely so a third
     # party who self-hosts the OSS image sees no operator branding.
