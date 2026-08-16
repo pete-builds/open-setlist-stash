@@ -43,7 +43,7 @@ from setlist_stash.completeness import (
 )
 from setlist_stash.config import Settings, get_settings
 from setlist_stash.db import close_pool, get_pool, init_pool
-from setlist_stash.leaderboard import rebuild_all, rebuild_leagues
+from setlist_stash.leaderboard import parse_runs, rebuild_all, rebuild_leagues
 from setlist_stash.logging_setup import configure_logging
 from setlist_stash.mcp_client import (
     McpPhishClient,
@@ -612,7 +612,9 @@ async def run_tick(settings: Settings) -> TickResult:
         # log + continue so the resolver tick stays green; the next tick retries.
         if worked > 0:
             try:
-                rebuild_counts = await rebuild_all(pool)
+                rebuild_counts = await rebuild_all(
+                    pool, parse_runs(settings.leaderboard_runs)
+                )
                 summary["leaderboard"] = rebuild_counts
             except Exception as exc:  # pragma: no cover - belt-and-suspenders
                 logger.exception("leaderboard rebuild failed; continuing tick")

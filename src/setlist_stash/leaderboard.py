@@ -36,8 +36,10 @@ Schema notes (migration 001):
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import asyncpg
@@ -154,11 +156,101 @@ async def rebuild_all_time(pool: asyncpg.Pool[Any]) -> int:
     return await _rebuild_bucketed(pool, scope="all_time", bucket_sql="'all'")
 
 
-async def rebuild_all(pool: asyncpg.Pool[Any]) -> dict[str, int]:
+# ----- run scope (named show runs: residencies, festivals, venue stands) ----
+
+_RUN_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+
+def parse_runs(spec: str) -> dict[str, list[date]]:
+    """Parse ``Settings.leaderboard_runs`` into ``{key: [date, ...]}``.
+
+    Format: ``key=YYYY-MM-DD,YYYY-MM-DD;key2=YYYY-MM-DD``.
+
+    Fail-soft by design, matching the rest of the deployment-config surface:
+    a malformed run is logged and skipped rather than crashing boot, because
+    a typo in one env var must not take the whole game down. A key that
+    survives is guaranteed slug-shaped and its dates guaranteed real, which
+    is what lets ``rebuild_runs`` inline them into SQL safely.
+    """
+    out: dict[str, list[date]] = {}
+    for chunk in (spec or "").split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        key, sep, raw_dates = chunk.partition("=")
+        key = key.strip().lower()
+        if not sep or not _RUN_KEY_RE.match(key):
+            logger.warning("leaderboard run skipped: bad key", extra={"run": chunk})
+            continue
+        dates: list[date] = []
+        bad = False
+        for token in raw_dates.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                dates.append(date.fromisoformat(token))
+            except ValueError:
+                logger.warning(
+                    "leaderboard run skipped: bad date",
+                    extra={"run": key, "value": token},
+                )
+                bad = True
+                break
+        if bad or not dates:
+            continue
+        out[key] = sorted(set(dates))
+    return out
+
+
+async def rebuild_runs(
+    pool: asyncpg.Pool[Any], runs: Mapping[str, Sequence[date]]
+) -> int:
+    """Rebuild every configured run board in one pass. ``scope='run'``.
+
+    All runs rebuild together because ``_rebuild_bucketed`` deletes by scope;
+    a per-run call would wipe the boards built by the previous call.
+    """
+    if not runs:
+        return 0
+    cases: list[str] = []
+    every_date: set[date] = set()
+    for key, dates in runs.items():
+        if not _RUN_KEY_RE.match(key):
+            # parse_runs already guarantees this; belt and braces, because a
+            # bad key here would be inlined into SQL below.
+            raise ValueError(f"unsafe run key: {key!r}")
+        literals = ", ".join(f"DATE '{d.isoformat()}'" for d in dates)
+        cases.append(f"WHEN p.show_date IN ({literals}) THEN '{key}'")
+        every_date.update(dates)
+    bucket_sql = "CASE " + " ".join(cases) + " END"
+    all_literals = ", ".join(
+        f"DATE '{d.isoformat()}'" for d in sorted(every_date)
+    )
+    # Every value inlined above is a `date` rendered as ISO or a slug matched
+    # against _RUN_KEY_RE, so neither can carry SQL. Same auditability posture
+    # as the other bucket_sql fragments in this module.
+    return await _rebuild_bucketed(
+        pool,
+        scope="run",
+        bucket_sql=bucket_sql,
+        extra_where=f"AND p.show_date IN ({all_literals})",
+    )
+
+
+async def rebuild_all(
+    pool: asyncpg.Pool[Any],
+    runs: Mapping[str, Sequence[date]] | None = None,
+) -> dict[str, int]:
     """Rebuild every scope. Returns ``{scope: rows_written}``.
 
     Each scope's rebuild is its own transaction. A failure in one scope does
     NOT roll back the others (caller logs and continues).
+
+    ``runs`` is the parsed ``LEADERBOARD_RUNS`` config. Omitted or empty, no
+    run boards are built and the behavior is exactly the pre-run-scope one —
+    the weekly/tour/all_time scopes always rebuild regardless of which tabs a
+    deployment chooses to render, so hiding a tab never destroys its data.
     """
     out: dict[str, int] = {}
     for name, fn in (
@@ -171,6 +263,12 @@ async def rebuild_all(pool: asyncpg.Pool[Any]) -> dict[str, int]:
         except Exception:
             logger.exception("leaderboard rebuild failed", extra={"scope": name})
             out[name] = -1
+    if runs:
+        try:
+            out["run"] = await rebuild_runs(pool, runs)
+        except Exception:
+            logger.exception("leaderboard rebuild failed", extra={"scope": "run"})
+            out["run"] = -1
     return out
 
 
@@ -302,7 +400,7 @@ async def _rebuild_one_league(
 
 
 async def _rebuild_bucketed(
-    pool: asyncpg.Pool[Any], *, scope: str, bucket_sql: str
+    pool: asyncpg.Pool[Any], *, scope: str, bucket_sql: str, extra_where: str = ""
 ) -> int:
     """Atomically rebuild one scope.
 
@@ -331,7 +429,7 @@ async def _rebuild_bucketed(
                 MIN(p.submitted_at)         AS first_submitted_at
             FROM predictions p
             JOIN users u ON u.id = p.user_id
-            WHERE p.score IS NOT NULL
+            WHERE p.score IS NOT NULL __EXTRA_WHERE__
             GROUP BY 1, p.user_id, u.handle
         ),
         ranked AS (
@@ -364,7 +462,9 @@ async def _rebuild_bucketed(
             (SELECT COUNT(*) FROM deleted)  AS deleted_count,
             (SELECT COUNT(*) FROM inserted) AS inserted_count
     """
-    sql = sql_template.replace("__BUCKET__", bucket_sql)
+    sql = sql_template.replace("__BUCKET__", bucket_sql).replace(
+        "__EXTRA_WHERE__", extra_where
+    )
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(sql, scope)
     inserted = int(row["inserted_count"]) if row else 0
@@ -548,7 +648,59 @@ async def fetch_user_rank(
 # ----- scope helpers --------------------------------------------------------
 
 
-VALID_SCOPES: tuple[str, ...] = ("weekly", "tour", "all_time")
+VALID_SCOPES: tuple[str, ...] = ("weekly", "tour", "all_time", "run")
+
+
+@dataclass(frozen=True)
+class LeaderboardTab:
+    """One entry in the leaderboard tab bar.
+
+    ``scope_key`` pinned means this tab always shows that bucket; None means
+    it tracks the newest bucket for its scope (the platform's original
+    behavior). Pinning is what lets two tabs share one scope — e.g. a Summer
+    and a Fall board both living on ``tour``.
+    """
+
+    label: str
+    scope: str
+    scope_key: str | None
+
+
+DEFAULT_TABS: tuple[LeaderboardTab, ...] = (
+    LeaderboardTab("Weekly", "weekly", None),
+    LeaderboardTab("Season", "tour", None),
+    LeaderboardTab("All-time", "all_time", None),
+)
+
+
+def parse_tabs(spec: str) -> tuple[LeaderboardTab, ...]:
+    """Parse ``Settings.leaderboard_tabs`` into an ordered tab list.
+
+    Format: ``Label|scope|scope_key`` per tab, comma-separated; ``scope_key``
+    optional. Empty or fully-malformed input returns ``DEFAULT_TABS`` so a bad
+    env var degrades to the platform's stock tab bar rather than rendering a
+    leaderboard with no way to navigate it.
+    """
+    tabs: list[LeaderboardTab] = []
+    for chunk in (spec or "").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        parts = [p.strip() for p in chunk.split("|")]
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            logger.warning("leaderboard tab skipped: malformed", extra={"tab": chunk})
+            continue
+        label, raw_scope = parts[0], parts[1]
+        scope = normalize_scope(raw_scope)
+        if scope not in VALID_SCOPES:
+            logger.warning(
+                "leaderboard tab skipped: unknown scope",
+                extra={"tab": chunk, "scope": raw_scope},
+            )
+            continue
+        key = parts[2] if len(parts) > 2 and parts[2] else None
+        tabs.append(LeaderboardTab(label, scope, key))
+    return tuple(tabs) if tabs else DEFAULT_TABS
 
 
 def normalize_scope(raw: str) -> str:
@@ -565,4 +717,6 @@ def normalize_scope(raw: str) -> str:
         return "tour"
     if s in ("all_time", "all-time", "alltime", "all"):
         return "all_time"
+    if s in ("run", "runs"):
+        return "run"
     return s

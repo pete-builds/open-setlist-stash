@@ -140,6 +140,32 @@ class Settings(BaseSettings):
     # Phish demo and any third-party self-host stay clean. Absolute path inside
     # the container; the OSS default is an empty mount point.
     blog_dir: str = Field(default="/app/content/blog")
+    # Named runs of shows that get their own leaderboard board — a residency,
+    # a festival, a venue stand. Deployment-level (oss-platform-split): these
+    # are inherently band- and tour-specific ("the MSG summer run" means
+    # nothing on an Umphrey's deployment), so they are config, never code.
+    # Empty (the default) builds no run boards at all, keeping the OSS image
+    # and any third-party self-host clean.
+    #
+    # Format: ``key=YYYY-MM-DD,YYYY-MM-DD;key2=YYYY-MM-DD``
+    #   - ``;`` separates runs, ``,`` separates dates within a run
+    #   - keys are slugs (``[a-z0-9][a-z0-9-]*``) and become the scope_key
+    # e.g. LEADERBOARD_RUNS=msg-summer-26=2026-07-22,2026-07-24,2026-07-25
+    leaderboard_runs: str = Field(default="")
+    # The leaderboard's tab bar. Deployment-level for the same reason as
+    # LEADERBOARD_RUNS: which boards matter is a per-game editorial call.
+    # Empty (the default) renders the platform's original three tabs
+    # (Weekly / Season / All-time), so every existing deployment and the OSS
+    # image are unchanged unless they opt in.
+    #
+    # Format: ``Label|scope|scope_key`` per tab, comma-separated. ``scope_key``
+    # is optional; omit it to track the newest bucket for that scope (the old
+    # behavior), or pin it to freeze a tab on one bucket. Pinning is what lets
+    # two tabs share a scope, e.g. a Summer and a Fall board both on ``tour``.
+    # e.g. LEADERBOARD_TABS=Summer Tour|tour|2026-summer,MSG Summer 26|run|
+    #      msg-summer-26,All Time|all_time,Fall Tour|tour|2026-fall
+    #      (one line in the .env; wrapped here only to fit the line limit)
+    leaderboard_tabs: str = Field(default="")
 
     # --- HTTP server ---
     app_host: str = Field(default="0.0.0.0")
