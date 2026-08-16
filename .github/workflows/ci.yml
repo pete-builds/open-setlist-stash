@@ -170,11 +170,17 @@ jobs:
       - name: Save image for scan job
         run: docker save setlist-stash:ci -o /tmp/setlist-stash.tar
 
+      # This tarball exists only to hand the image to the trivy-scan job below.
+      # It is dead weight the moment that job finishes, so keep it for the
+      # minimum GitHub allows rather than the default week. The two jobs cannot
+      # be merged (which would remove the upload entirely) because branch
+      # protection on main requires both "Build Docker image" and
+      # "Trivy security scan" as separate status checks.
       - uses: actions/upload-artifact@v7
         with:
           name: docker-image
           path: /tmp/setlist-stash.tar
-          retention-days: 7
+          retention-days: 1
 
   trivy-scan:
     name: Trivy security scan
