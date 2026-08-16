@@ -25,6 +25,7 @@ from setlist_stash.leaderboard import (
     list_scope_keys,
     list_show_entrants,
     normalize_scope,
+    parse_tabs,
 )
 from setlist_stash.locks import (
     get_or_create_lock,
@@ -48,7 +49,42 @@ SCOPE_LABELS = {
     "weekly": "Weekly",
     "tour": "Season",
     "all_time": "All-time",
+    "run": "Run",
 }
+
+
+def _tab_views(
+    cfg: Settings, scope: str, scope_key: str | None
+) -> list[dict[str, Any]]:
+    """Render the configured tab bar into template-ready dicts.
+
+    A pinned tab links to ``/leaderboard/{scope}/{key}`` so it always lands on
+    its own bucket; an unpinned one keeps the original
+    ``/leaderboard?scope=...`` "newest bucket" behavior. A pinned tab is only
+    active when the rendered bucket matches it, which is what keeps two tabs
+    sharing a scope (Summer and Fall on ``tour``) from both lighting up.
+    """
+    views: list[dict[str, Any]] = []
+    for tab in parse_tabs(cfg.leaderboard_tabs):
+        if tab.scope_key:
+            href = f"/leaderboard/{tab.scope}/{tab.scope_key}"
+            active = tab.scope == scope and tab.scope_key == scope_key
+        else:
+            href = f"/leaderboard?scope={tab.scope}"
+            active = tab.scope == scope
+        views.append({"href": href, "label": tab.label, "active": active})
+    return views
+
+
+def _default_scope(cfg: Settings) -> tuple[str, str | None]:
+    """Scope + key the bare ``/leaderboard`` URL should land on.
+
+    The first configured tab, not a hardcoded ``weekly`` — otherwise a
+    deployment that drops the Weekly tab still opens on a board with no tab
+    selected.
+    """
+    tabs = parse_tabs(cfg.leaderboard_tabs)
+    return (tabs[0].scope, tabs[0].scope_key) if tabs else ("weekly", None)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -201,11 +237,7 @@ async def _render_leaderboard(
         "pre_score": pre_score,
         "upcoming_date": target_date,
         "user_row": user_row,
-        "scope_options": [
-            ("weekly", "Weekly"),
-            ("tour", "Season"),
-            ("all_time", "All-time"),
-        ],
+        "scope_options": _tab_views(cfg, scope, effective_key),
     }
     template = "_leaderboard_table.html" if partial else "leaderboard.html"
     return render(templates, request, template, **ctx)
@@ -214,18 +246,25 @@ async def _render_leaderboard(
 @router.get("/leaderboard", response_class=HTMLResponse)
 async def leaderboard_index(
     request: Request,
-    scope: str = Query("weekly"),
+    scope: str | None = Query(None),
     user: Any = Depends(get_current_user),
     cfg: Settings = Depends(get_cfg),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> HTMLResponse:
-    normalized = normalize_scope(scope)
-    if normalized not in VALID_SCOPES:
-        normalized = "weekly"
+    default_scope, default_key = _default_scope(cfg)
+    # No ?scope= at all: land on the first configured tab, honoring its pinned
+    # bucket if it has one. An explicit ?scope= keeps the "newest bucket"
+    # behavior it has always had.
+    if scope is None:
+        normalized, key = default_scope, default_key
+    else:
+        normalized, key = normalize_scope(scope), None
+        if normalized not in VALID_SCOPES:
+            normalized, key = default_scope, default_key
     partial = request.headers.get("HX-Request", "").lower() == "true"
     return await _render_leaderboard(
         request, templates, cfg, user,
-        scope=normalized, scope_key=None, partial=partial,
+        scope=normalized, scope_key=key, partial=partial,
     )
 
 

@@ -10,16 +10,16 @@
   {% endif %}
 
   <nav class="scope-tabs" role="tablist" aria-label="Leaderboard scope">
-    {% for value, label in scope_options %}
-      <a class="scope-tab {% if value == scope %}is-active{% endif %}"
-         href="/leaderboard?scope={{ value }}"
-         hx-get="/leaderboard?scope={{ value }}"
+    {% for tab in scope_options %}
+      <a class="scope-tab {% if tab.active %}is-active{% endif %}"
+         href="{{ tab.href }}"
+         hx-get="{{ tab.href }}"
          hx-target="#leaderboard-table"
          hx-swap="outerHTML"
-         hx-push-url="/leaderboard?scope={{ value }}"
+         hx-push-url="{{ tab.href }}"
          role="tab"
-         aria-selected="{{ 'true' if value == scope else 'false' }}">
-        {{ label }}
+         aria-selected="{{ 'true' if tab.active else 'false' }}">
+        {{ tab.label }}
       </a>
     {% endfor %}
   </nav>
