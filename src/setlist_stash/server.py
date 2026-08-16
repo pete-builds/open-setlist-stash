@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from authlib.integrations.starlette_client import OAuth
 from fastapi import FastAPI
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -159,6 +160,26 @@ def build_app(
 
     if _STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+    # Root /favicon.ico. The <link> tags in base.html cover modern browsers,
+    # but the bare /favicon.ico path is requested regardless of markup by
+    # crawlers, link unfurlers, RSS readers and browser chrome outside the
+    # tab (bookmarks, history, the new-tab grid). Serving 404 there is what
+    # makes a correctly-branded page still fall back to the generic globe in
+    # those surfaces. Resolves per deployment through the same FAVICON_*
+    # config as the link tags, so no tenant artwork is named here.
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        for name in (cfg.favicon_ico, cfg.favicon_png, cfg.favicon_svg):
+            if not name:
+                continue
+            # Guard against a config value escaping the static dir.
+            candidate = (_STATIC_DIR / name).resolve()
+            if not candidate.is_relative_to(_STATIC_DIR.resolve()):
+                continue
+            if candidate.is_file():
+                return FileResponse(candidate)
+        return Response(status_code=404)
 
     if mcp_proxy is not None:
         install_mcp_reverse_proxy(app, mcp_proxy)
