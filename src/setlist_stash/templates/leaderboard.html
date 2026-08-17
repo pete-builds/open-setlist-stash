@@ -24,17 +24,19 @@
     {% endfor %}
   </nav>
 
-  {% if scope_keys and scope != 'all_time' %}
+  {# The active bucket is already named by the highlighted tab, so printing
+     "Bucket: <key>" underneath it just restated the tab in raw slug form.
+     Dropped. The "Past:" links stay, but the paragraph is now gated on there
+     actually being another bucket to link — otherwise it rendered an empty
+     <p> that still took vertical space. #}
+  {% if scope != 'all_time' and scope_keys | length > 1 %}
     <p class="scope-key-list muted">
-      <span>Bucket: <strong>{{ scope_key or '-' }}</strong>.</span>
-      {% if scope_keys | length > 1 %}
-        <span>Past:</span>
-        {% for key in scope_keys[:8] %}
-          {% if key != scope_key %}
-            <a href="/leaderboard/{{ scope }}/{{ key }}">{{ key }}</a>{% if not loop.last %}, {% endif %}
-          {% endif %}
-        {% endfor %}
-      {% endif %}
+      <span>Past:</span>
+      {% for key in scope_keys[:8] %}
+        {% if key != scope_key %}
+          <a href="/leaderboard/{{ scope }}/{{ key }}">{{ key }}</a>{% if not loop.last %}, {% endif %}
+        {% endif %}
+      {% endfor %}
     </p>
   {% endif %}
 
