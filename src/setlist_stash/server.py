@@ -153,7 +153,7 @@ def build_app(
     # Order matters: install_security_headers registers LAST so it runs
     # OUTERMOST (Starlette applies http middleware in reverse registration
     # order). Do not reorder without re-reading middleware.py.
-    install_mcp_rate_limit(app, mcp_rate_limiter)
+    install_mcp_rate_limit(app, mcp_rate_limiter, cfg)
     install_security_headers(
         app, build_security_headers(cfg) if cfg.security_headers else {}
     )

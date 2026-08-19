@@ -19,6 +19,7 @@ from setlist_stash.auth import (
     HANDLE_HELP,
     HandleError,
     create_user,
+    revoke_sessions,
     update_handle,
     validate_handle,
 )
@@ -34,6 +35,7 @@ from setlist_stash.auth_google import (
     GoogleLinkConflict,
     resolve_google_identity,
 )
+from setlist_stash.client_addr import UNKNOWN, resolve_client_ip
 from setlist_stash.config import Settings
 from setlist_stash.db import get_pool
 from setlist_stash.deps import (
@@ -113,7 +115,7 @@ async def post_handle(
     resp: Response = RedirectResponse(
         url=safe_next(next), status_code=status.HTTP_303_SEE_OTHER
     )
-    set_session_cookie(resp, user_id, cfg)
+    await set_session_cookie(resp, user_id, cfg)
     logger.info("created handle", extra={"user_id": user_id})
     return resp
 
@@ -206,12 +208,12 @@ async def google_callback(
         resp = RedirectResponse(
             "/account/handle?new=1", status_code=status.HTTP_303_SEE_OTHER
         )
-        set_session_cookie(resp, resolution.user_id, cfg)
+        await set_session_cookie(resp, resolution.user_id, cfg)
         return resp
     resp = RedirectResponse(
         "/account", status_code=status.HTTP_303_SEE_OTHER
     )
-    set_session_cookie(resp, resolution.user_id, cfg)
+    await set_session_cookie(resp, resolution.user_id, cfg)
     resp.set_cookie(
         "phishgame_flash",
         "Signed in with Google.",
@@ -234,6 +236,45 @@ async def logout(
     )
     resp.delete_cookie(
         COOKIE_NAME, samesite="lax", secure=cfg.cookie_secure
+    )
+    return resp
+
+
+@router.post("/account/sessions/revoke")
+async def revoke_all_sessions(
+    request: Request,
+    user: Any = Depends(get_current_user),
+    cfg: Settings = Depends(get_cfg),
+) -> Response:
+    """Sign out every browser holding a cookie for this user, including this one.
+
+    Deleting the cookie (``/logout``) only ends the session in the browser that
+    asks. It does nothing about a cookie already copied off a shared machine, a
+    synced profile, or a proxy log -- that one keeps working. This bumps the
+    user's ``session_epoch``, which every subsequent request re-checks, so those
+    cookies stop validating immediately.
+
+    Deliberately signs out the *calling* browser too, and does not re-issue a
+    cookie at the new epoch: someone reaching for this has lost track of where
+    they are signed in, and "everywhere except here" is a promise this endpoint
+    cannot keep, because it has no way to prove that "here" is not the problem.
+    """
+    if user is None:
+        return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+    await revoke_sessions(get_pool(), user.id)
+    resp: Response = RedirectResponse(
+        "/", status_code=status.HTTP_303_SEE_OTHER
+    )
+    resp.delete_cookie(
+        COOKIE_NAME, samesite="lax", secure=cfg.cookie_secure
+    )
+    resp.set_cookie(
+        "phishgame_flash",
+        "Signed out everywhere. Sign in again to keep playing.",
+        max_age=30,
+        httponly=True,
+        samesite="lax",
+        secure=cfg.cookie_secure,
     )
     return resp
 
@@ -434,12 +475,13 @@ async def auth_verify(
     id and redirect to /account with a flash message in the cookie.
     On failure: render auth_verify_error.html with a clean message.
     """
-    # Capture caller IP for audit. Trust the immediate peer here; the
-    # platform is LAN/Tailscale only through Phase 5 so X-Forwarded-For
-    # would be moot.
-    client_ip: str | None = None
-    if request.client and request.client.host:
-        client_ip = request.client.host
+    # Capture caller IP for audit. Behind a tunnel the socket peer is the
+    # connector, not the person clicking the link, so this goes through the
+    # operator-declared trusted header when there is one (client_addr.py).
+    # An audit row that records the proxy identifies nobody.
+    client_ip: str | None = resolve_client_ip(request, cfg)
+    if client_ip == UNKNOWN:
+        client_ip = None
 
     already_signed_in = user is not None
     pool = get_pool()
@@ -469,7 +511,7 @@ async def auth_verify(
     resp: Response = RedirectResponse(
         "/account", status_code=status.HTTP_303_SEE_OTHER
     )
-    set_session_cookie(resp, result.user_id, cfg)
+    await set_session_cookie(resp, result.user_id, cfg)
     # Short-lived flash cookie: rendered once and cleared by /account.
     resp.set_cookie(
         "phishgame_flash",

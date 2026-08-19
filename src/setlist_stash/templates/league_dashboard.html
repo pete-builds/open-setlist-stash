@@ -79,7 +79,7 @@
   {% if not is_host %}
     <h2>Leave game</h2>
     <form method="post" action="/league/{{ league.slug }}/leave"
-          onsubmit="return confirm('Leave {{ league.name }}? You can rejoin from the same link later.');">
+          data-confirm="Leave {{ league.name }}? You can rejoin from the same link later.">
       <button type="submit" class="btn">Leave game</button>
     </form>
   {% endif %}

@@ -343,10 +343,25 @@ def safe_next(raw: str) -> str:
     Only same-origin absolute paths (``/league/...``, ``/game/...``,
     ``/predict/...``) are honored, so a crafted ``next`` can never bounce a
     new player to an external site. Anything else falls back to ``/``.
+
+    The ``//`` check alone was not enough. For a special scheme the WHATWG URL
+    parser treats a backslash exactly like a forward slash, so a browser
+    resolves ``Location: /\\evil.tld`` to ``https://evil.tld`` -- an open
+    redirect through a guard whose whole job was to prevent one. Reject the
+    backslash outright rather than normalising it: nothing this app links to
+    has one in its path, so there is no legitimate value to preserve.
+
+    Control characters go too. A browser strips tab/CR/LF while parsing a URL,
+    which lets ``/\\tevil.tld`` (or a newline) reassemble past a naive prefix
+    check into something that is no longer same-origin.
     """
     s = (raw or "").strip()
-    if s.startswith("/") and not s.startswith("//"):
-        return s
-    return "/"
+    if not s.startswith("/") or s.startswith("//"):
+        return "/"
+    if "\\" in s:
+        return "/"
+    if any(ch < " " or ch == "\x7f" for ch in s):
+        return "/"
+    return s
 
 

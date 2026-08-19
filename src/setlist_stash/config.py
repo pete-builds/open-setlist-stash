@@ -199,10 +199,23 @@ class Settings(BaseSettings):
     mcp_proxy_timeout_seconds: float = Field(default=30.0, gt=0)
     # Per-IP rate limit for the public /mcp proxy ONLY (the game UI is never
     # rate-limited). Fixed-window: at most ``mcp_rate_limit_per_minute`` requests
-    # per 60s window per client IP, returning 429 when exceeded. The app sits
-    # behind Cloudflare, so the client IP is taken from the first X-Forwarded-For
-    # hop (falling back to the socket peer). 0 disables the limiter.
+    # per 60s window per client IP, returning 429 when exceeded. 0 disables the
+    # limiter. Which address counts as "the client" is TRUSTED_CLIENT_IP_HEADER
+    # below -- and on a public deployment that setting is what makes this limit
+    # real, because an unkeyed-to-anything limiter is not a limit.
     mcp_rate_limit_per_minute: int = Field(default=60, ge=0)
+
+    # --- Client address resolution ---
+    # The ONE request header this deployment's edge is known to set and to
+    # overwrite for inbound requests, e.g. CF-Connecting-IP behind Cloudflare.
+    # Used for the /mcp rate-limit key and the magic-link audit trail.
+    #
+    # Empty (the default) means "trust no header, use the socket peer", which is
+    # correct for LAN/Tailscale and is the safe default for any self-hoster who
+    # has not told us what fronts them. Set this ONLY when the app cannot be
+    # reached around that edge; otherwise a caller can set the header directly
+    # and choose their own rate-limit bucket. See client_addr.py.
+    trusted_client_ip_header: str = Field(default="")
 
     # --- Showtime lock policy ---
     # DEFAULT_LOCK_TIME_LOCAL is interpreted in DEFAULT_LOCK_TZ to compute the
@@ -301,6 +314,13 @@ class Settings(BaseSettings):
     # HTTPS deployment (e.g. tweezerpicks.com behind Cloudflare) so the cookies
     # are only ever sent over TLS.
     cookie_secure: bool = Field(default=False)
+    # How long a session cookie stays valid, enforced SERVER-side against the
+    # timestamp inside the signed token (see auth.py). The browser's own
+    # expiry is a hint a client can ignore; this is the one that decides.
+    # 30 days keeps a casual player signed in across a tour without leaving a
+    # captured cookie usable for a year. Per-user revocation is separate: bump
+    # users.session_epoch (migration 012) to drop that user's cookies now.
+    session_max_age_days: int = Field(default=30, ge=1, le=365)
 
     # --- Response security headers ---
     # Master switch for the CSP / framing / referrer / HSTS header set (see

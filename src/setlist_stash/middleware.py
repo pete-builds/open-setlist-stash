@@ -11,16 +11,24 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from setlist_stash.mcp_proxy import FixedWindowRateLimiter, McpReverseProxy, client_ip
+from setlist_stash.client_addr import resolve_client_ip
+from setlist_stash.config import Settings
+from setlist_stash.mcp_proxy import FixedWindowRateLimiter, McpReverseProxy
 
 
 def install_mcp_rate_limit(
-    app: FastAPI, limiter: FixedWindowRateLimiter
+    app: FastAPI, limiter: FixedWindowRateLimiter, cfg: Settings
 ) -> None:
     """Per-IP rate limit, scoped to the public /mcp proxy ONLY.
 
     The game UI, static assets, and every other route are never touched by
     this middleware.
+
+    The limiter is only as good as its key. ``resolve_client_ip`` honours just
+    the operator-declared ``TRUSTED_CLIENT_IP_HEADER`` and otherwise falls back
+    to the socket peer, so a caller cannot pick their own bucket by setting a
+    header. See client_addr.py for why that declaration is required rather than
+    inferred.
     """
 
     @app.middleware("http")
@@ -29,7 +37,7 @@ def install_mcp_rate_limit(
         if (
             limiter.enabled
             and (path == "/mcp" or path.startswith("/mcp/"))
-            and not limiter.allow(client_ip(request))
+            and not limiter.allow(resolve_client_ip(request, cfg))
         ):
             return JSONResponse(
                 {"error": "rate limit exceeded"},

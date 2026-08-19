@@ -8,8 +8,12 @@ tour-date window set by the host.
 
 Design decisions baked in here:
 
-- Slug is a short, readable, phish-themed token (e.g. ``tweezer-7k``).
-  The slug doubles as the invite. There is no separate ``?code=`` param.
+- Slug is a readable word plus an unguessable suffix (e.g.
+  ``tweezer-7kq4mfxb``). The slug doubles as the invite: it is the ONLY
+  thing standing between a stranger and a private league, because there is
+  no separate ``?code=`` param and the join page is open to anyone holding
+  the URL. That makes the suffix a credential, not a collision-avoidance
+  device, and it is sized as one (see ``SLUG_SUFFIX_LENGTH``).
 - Hosts can rotate the slug; old slug stops resolving immediately.
 - 500-member soft cap by default; overridable per-league via
   ``leagues.member_cap`` and globally via ``LEAGUE_MEMBER_CAP``.
@@ -123,9 +127,9 @@ class MemberScore:
 # ----- slug generation ------------------------------------------------------
 
 # Phish-themed wordlist. Kept short, recognizable, lowercase, hyphenless.
-# Picking a word at random gives the slug a friendly, sharable feel; the
-# 2-char alphanumeric suffix keeps collisions rare without forcing the slug
-# above ~10 chars total.
+# Picking a word at random gives the slug a friendly, sharable feel. The word
+# carries NO security weight -- it is 40 values and it is in this file -- so
+# every bit of unguessability lives in the suffix below.
 SLUG_WORDLIST: tuple[str, ...] = (
     "tweezer",
     "ghost",
@@ -173,13 +177,29 @@ SLUG_WORDLIST: tuple[str, ...] = (
 # slugs readable when shared verbally.
 _SUFFIX_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz"
 
+#: Characters of randomness in a league slug.
+#:
+#: This was 2, which put the whole keyspace at 40 words x 31^2 = 38,440 --
+#: walkable end to end in minutes with one thread, and nothing rate-limits the
+#: league routes (the limiter in middleware.py is scoped to /mcp on purpose).
+#: Since the slug IS the access control for a private league, that meant every
+#: league on the deployment was enumerable: name and member count off the join
+#: page unauthenticated, then full roster and scoreboard after a one-click join
+#: with any throwaway handle.
+#:
+#: 8 chars of a 31-symbol alphabet is 31^8 ~= 8.5e11 (~2^49.6) per word, which
+#: takes the slug from "short enough to guess" to "as good as the random token
+#: it always needed to be". The cost is a longer URL; a private league that
+#: anyone can find is not a private league, so that is the right trade.
+SLUG_SUFFIX_LENGTH = 8
 
-def _suffix(rng: secrets.SystemRandom, length: int = 2) -> str:
+
+def _suffix(rng: secrets.SystemRandom, length: int = SLUG_SUFFIX_LENGTH) -> str:
     return "".join(rng.choice(_SUFFIX_ALPHABET) for _ in range(length))
 
 
 def _candidate_slug(rng: secrets.SystemRandom) -> str:
-    """One candidate slug from the wordlist + 2-char suffix."""
+    """One candidate slug: a wordlist word + ``SLUG_SUFFIX_LENGTH`` random chars."""
     word = rng.choice(SLUG_WORDLIST)
     return f"{word}-{_suffix(rng)}"
 

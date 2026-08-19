@@ -21,16 +21,35 @@ Design notes:
 from __future__ import annotations
 
 import logging
+import posixpath
 import time
 from collections import deque
 from collections.abc import AsyncIterator
 from threading import Lock
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 import httpx
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
 logger = logging.getLogger("setlist_stash.mcp_proxy")
+
+
+#: Bound on re-decoding a subpath when hunting for hidden dot-segments. Three
+#: rounds covers single, double, and triple encoding; a request needing more is
+#: not a real MCP client.
+_MAX_DECODE_ROUNDS = 3
+
+
+def _has_dot_segment(path: str) -> bool:
+    """True if any path segment is exactly ``..`` (also handling backslashes)."""
+    return any(
+        seg == ".." for seg in path.replace("\\", "/").split("/")
+    )
+
+
+class _TraversalRejected(ValueError):
+    """The requested subpath resolved outside the upstream MCP endpoint."""
 
 # Hop-by-hop headers must not be forwarded across a proxy (RFC 7230 §6.1).
 # ``host`` is dropped so httpx sets it from the upstream URL; ``content-length``
@@ -91,23 +110,6 @@ class FixedWindowRateLimiter:
             return True
 
 
-def client_ip(request: Request) -> str:
-    """Best-effort client IP for rate-limiting.
-
-    The app sits behind Cloudflare, so the real client is the FIRST hop of
-    ``X-Forwarded-For``. Fall back to the socket peer when the header is absent
-    (e.g. direct LAN access or tests).
-    """
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        first = xff.split(",", 1)[0].strip()
-        if first:
-            return first
-    if request.client is not None:
-        return request.client.host
-    return "unknown"
-
-
 def _forward_request_headers(request: Request) -> dict[str, str]:
     headers: dict[str, str] = {}
     for name, value in request.headers.items():
@@ -151,12 +153,57 @@ class McpReverseProxy:
         await self._client.aclose()
 
     def _target_url(self, subpath: str) -> str:
-        if subpath:
-            return f"{self._upstream}/{subpath.lstrip('/')}"
-        return self._upstream
+        """Join ``subpath`` under the upstream endpoint, or raise on escape.
+
+        ``/mcp/{path:path}`` hands us a URL-decoded segment, so a caller can put
+        real ``..`` segments in it via ``%2e%2e``. Pasted on naively they would
+        survive to httpx, which normalises dot-segments per RFC 3986 and would
+        resolve them *upward* -- turning ``/mcp/../foo`` into a request for
+        ``/foo`` on the internal MCP host. The upstream host is fixed, so this
+        is not full SSRF, but it reaches paths on that host we never mounted.
+
+        Normalise here instead, and require the result to still sit under the
+        configured endpoint. Anything else is a client error, not a proxy job.
+        """
+        if not subpath:
+            return self._upstream
+        # Reject before normalising if the segment still hides dot-segments in
+        # percent-encoding. Starlette decodes the path param once, so a single
+        # %2e%2e arrives here as real dots and is caught below -- but a DOUBLE
+        # encoding (%252e%252e) survives that decode and would be forwarded to
+        # the upstream verbatim as %2e%2e. Whether that resolves upward is then
+        # the upstream server's decoding behaviour, which is not ours to assume.
+        # Decode repeatedly and refuse anything that ever looks like traversal.
+        probe = subpath
+        for _ in range(_MAX_DECODE_ROUNDS):
+            decoded = unquote(probe)
+            if decoded == probe:
+                break
+            probe = decoded
+            if _has_dot_segment(probe):
+                raise _TraversalRejected(subpath)
+        base = urlsplit(self._upstream)
+        base_path = base.path or "/"
+        joined = posixpath.normpath(f"{base_path}/{subpath}")
+        # normpath collapses ".." but leaves a leading one in place when it
+        # would escape the root, so check the result rather than the input.
+        if joined != base_path and not joined.startswith(f"{base_path.rstrip('/')}/"):
+            raise _TraversalRejected(subpath)
+        # normpath drops a meaningful trailing slash; restore it.
+        if subpath.endswith("/") and not joined.endswith("/"):
+            joined = f"{joined}/"
+        return urlunsplit(base._replace(path=joined))
 
     async def handle(self, request: Request, subpath: str = "") -> Response:
-        url = self._target_url(subpath)
+        try:
+            url = self._target_url(subpath)
+        except _TraversalRejected:
+            logger.warning("mcp proxy rejected traversal", extra={"subpath": subpath[:200]})
+            return Response(
+                content=b'{"error":"invalid MCP path"}',
+                status_code=400,
+                media_type="application/json",
+            )
         body = await request.body()
         req_headers = _forward_request_headers(request)
         upstream_req = self._client.build_request(

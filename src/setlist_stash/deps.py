@@ -24,6 +24,7 @@ from setlist_stash.auth import (
     COOKIE_MAX_AGE_SECONDS,
     COOKIE_NAME,
     current_user,
+    get_user_by_id,
     sign_user_id,
 )
 from setlist_stash.blog import load_posts
@@ -175,12 +176,30 @@ def render(
     return templates.TemplateResponse(request=request, name=name, context=ctx)
 
 
-def set_session_cookie(resp: Response, user_id: int, cfg: Settings) -> None:
-    """Sign a user id into the ``phishgame_session`` cookie."""
+async def set_session_cookie(
+    resp: Response, user_id: int, cfg: Settings
+) -> None:
+    """Sign a user id into the ``phishgame_session`` cookie.
+
+    Reads the user's current ``session_epoch`` rather than taking it from the
+    caller. Every sign-in path would otherwise have to remember to thread it
+    through, and the failure mode of forgetting is silent and total: a user who
+    has ever hit "sign out everywhere" would be handed a cookie minted at the
+    old epoch and bounced straight back to signed-out with no error anywhere.
+    One extra read on sign-in is a cheap price for making that unrepresentable.
+
+    A missing row falls back to epoch 0, which is what a freshly created user
+    has anyway; the next request re-reads the row and decides for itself.
+    """
+    user = await get_user_by_id(get_pool(), user_id)
+    epoch = 0 if user is None else user.session_epoch
     resp.set_cookie(
         COOKIE_NAME,
-        sign_user_id(cfg, user_id),
-        max_age=COOKIE_MAX_AGE_SECONDS,
+        sign_user_id(cfg, user_id, epoch),
+        # Keep the browser hint in step with the server-enforced lifetime so a
+        # client is never holding a cookie the server has already stopped
+        # honouring (which reads to a user as a silent, unexplained sign-out).
+        max_age=min(COOKIE_MAX_AGE_SECONDS, cfg.session_max_age_days * 86400),
         httponly=True,
         samesite="lax",
         secure=cfg.cookie_secure,  # True on HTTPS deployments (COOKIE_SECURE)

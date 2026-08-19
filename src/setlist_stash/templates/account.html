@@ -74,4 +74,18 @@
   {% endif %}
   {% endif %}
 
+
+  <div class="card">
+    <h2>Signed in elsewhere?</h2>
+    <p class="muted">
+      Signing out only ends the session in this browser. If you have signed in
+      on a shared or borrowed machine, this ends every session for your handle,
+      including this one.
+    </p>
+    <form method="post" action="/account/sessions/revoke"
+          data-confirm="Sign out of every browser, including this one?">
+      <button type="submit" class="btn">Sign out everywhere</button>
+    </form>
+  </div>
+
 {% endblock %}

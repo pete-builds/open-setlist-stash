@@ -143,6 +143,19 @@
       if (!form.matches('form[data-reset-on-success]')) { return; }
       if (e.detail && e.detail.successful) { form.reset(); }
     });
+
+    // Confirmation prompt for destructive forms, delegated on <body>.
+    // The message lives in data-confirm so a user-supplied value (a league
+    // name) stays in plain attribute context and never reaches a JS parser.
+    // Rationale in security_headers.py; do not inline this back into markup.
+    document.body.addEventListener('submit', function (e) {
+      var form = e.target;
+      if (!form || typeof form.matches !== 'function') { return; }
+      if (!form.matches('form[data-confirm]')) { return; }
+      if (!window.confirm(form.getAttribute('data-confirm'))) {
+        e.preventDefault();
+      }
+    });
   </script>
   <script>
     // Mobile nav toggle. Vanilla JS, no deps. The nav-toggle button is only

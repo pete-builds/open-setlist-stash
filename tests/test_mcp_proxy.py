@@ -10,11 +10,12 @@ from __future__ import annotations
 import httpx
 from httpx import ASGITransport, AsyncClient, MockTransport
 
+from setlist_stash.client_addr import resolve_client_ip
 from setlist_stash.config import Settings
 from setlist_stash.mcp_proxy import (
     FixedWindowRateLimiter,
     McpReverseProxy,
-    client_ip,
+    _TraversalRejected,
 )
 from setlist_stash.server import build_app
 
@@ -64,22 +65,132 @@ def test_rate_limiter_disabled_when_zero() -> None:
 # --- client IP extraction -----------------------------------------------------
 
 
-def test_client_ip_prefers_first_xff() -> None:
+def _req(  # type: ignore[no-untyped-def]
+    headers: list[tuple[bytes, bytes]], peer: str = "10.0.0.5"
+):
     from starlette.requests import Request
 
-    scope = {
-        "type": "http",
-        "headers": [(b"x-forwarded-for", b"203.0.113.7, 70.0.0.1")],
-        "client": ("10.0.0.5", 1234),
-    }
-    assert client_ip(Request(scope)) == "203.0.113.7"
+    return Request({"type": "http", "headers": headers, "client": (peer, 1234)})
 
 
-def test_client_ip_falls_back_to_peer() -> None:
+def test_client_ip_ignores_xff_when_no_header_declared() -> None:
+    """The security property: an undeclared deployment trusts NO header.
+
+    Regression guard. This used to read the first X-Forwarded-For hop, which a
+    caller sets themselves (Cloudflare appends rather than replaces), so any
+    rate limit keyed on it was bypassable by rotating one header per request.
+    """
+    cfg = Settings(trusted_client_ip_header="")
+    req = _req([(b"x-forwarded-for", b"203.0.113.7, 70.0.0.1")])
+    assert resolve_client_ip(req, cfg) == "10.0.0.5"
+
+
+def test_client_ip_uses_declared_header() -> None:
+    cfg = Settings(trusted_client_ip_header="CF-Connecting-IP")
+    req = _req([(b"cf-connecting-ip", b"203.0.113.9")])
+    assert resolve_client_ip(req, cfg) == "203.0.113.9"
+
+
+def test_client_ip_declared_header_takes_last_hop() -> None:
+    """An edge appends what it observed, so the last hop is the vouched one."""
+    cfg = Settings(trusted_client_ip_header="X-Forwarded-For")
+    req = _req([(b"x-forwarded-for", b"1.2.3.4, 203.0.113.9")])
+    assert resolve_client_ip(req, cfg) == "203.0.113.9"
+
+
+def test_client_ip_falls_back_to_peer_when_declared_header_absent() -> None:
+    cfg = Settings(trusted_client_ip_header="CF-Connecting-IP")
+    req = _req([])
+    assert resolve_client_ip(req, cfg) == "10.0.0.5"
+
+
+def test_client_ip_unknown_without_peer() -> None:
     from starlette.requests import Request
 
-    scope = {"type": "http", "headers": [], "client": ("10.0.0.5", 1234)}
-    assert client_ip(Request(scope)) == "10.0.0.5"
+    cfg = Settings()
+    req = Request({"type": "http", "headers": [], "client": None})
+    assert resolve_client_ip(req, cfg) == "unknown"
+
+
+# --- upstream path joining ----------------------------------------------------
+
+
+def _proxy() -> McpReverseProxy:
+    return McpReverseProxy("http://mcp-upstream:3717/mcp", timeout_seconds=5.0)
+
+
+def test_target_url_plain_subpath() -> None:
+    assert (
+        _proxy()._target_url("messages")
+        == "http://mcp-upstream:3717/mcp/messages"
+    )
+
+
+def test_target_url_empty_subpath_is_endpoint() -> None:
+    assert _proxy()._target_url("") == "http://mcp-upstream:3717/mcp"
+
+
+def test_target_url_preserves_trailing_slash() -> None:
+    assert (
+        _proxy()._target_url("messages/")
+        == "http://mcp-upstream:3717/mcp/messages/"
+    )
+
+
+def test_target_url_rejects_traversal_escape() -> None:
+    """``/mcp/../admin`` must not resolve to ``/admin`` on the upstream host."""
+    import pytest
+
+    with pytest.raises(_TraversalRejected):
+        _proxy()._target_url("../admin")
+
+
+def test_target_url_rejects_deep_traversal() -> None:
+    import pytest
+
+    with pytest.raises(_TraversalRejected):
+        _proxy()._target_url("a/b/../../../../etc/passwd")
+
+
+def test_target_url_rejects_double_encoded_traversal() -> None:
+    """%252e%252e survives Starlette's one decode and would reach the upstream.
+
+    Whether ``/mcp/%2e%2e/admin`` then resolves upward depends on how the
+    upstream decodes, which is not this proxy's assumption to make.
+    """
+    import pytest
+
+    with pytest.raises(_TraversalRejected):
+        _proxy()._target_url("%252e%252e/admin")
+
+
+def test_target_url_rejects_single_encoded_traversal() -> None:
+    import pytest
+
+    with pytest.raises(_TraversalRejected):
+        _proxy()._target_url("%2e%2e/admin")
+
+
+def test_target_url_rejects_encoded_backslash_traversal() -> None:
+    import pytest
+
+    with pytest.raises(_TraversalRejected):
+        _proxy()._target_url("%252e%252e%255cadmin")
+
+
+def test_target_url_allows_encoded_content_that_is_not_traversal() -> None:
+    """A legitimately encoded segment must still pass."""
+    assert (
+        _proxy()._target_url("tools/get%20show")
+        == "http://mcp-upstream:3717/mcp/tools/get%20show"
+    )
+
+
+def test_target_url_allows_traversal_that_stays_inside() -> None:
+    assert (
+        _proxy()._target_url("a/../messages")
+        == "http://mcp-upstream:3717/mcp/messages"
+    )
 
 
 # --- proxy route wiring (stubbed upstream) -----------------------------------
