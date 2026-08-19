@@ -17,6 +17,7 @@ import pytest
 
 from setlist_stash.config import Settings
 from setlist_stash.leagues import (
+    SLUG_SUFFIX_LENGTH,
     SLUG_WORDLIST,
     LeagueDateWindowError,
     LeagueForbidden,
@@ -24,8 +25,6 @@ from setlist_stash.leagues import (
     LeagueHostCannotLeave,
     LeagueNameError,
     create_league,
-    SLUG_SUFFIX_LENGTH,
-    _SUFFIX_ALPHABET,
     generate_slug,
     get_league_by_slug,
     is_member,
@@ -98,7 +97,10 @@ async def test_generate_slug_shape(pg_pool: Any) -> None:
     # enumerable, which is silent -- nothing else in the app would fail.
     if not slug.startswith("x"):
         assert len(suffix) == SLUG_SUFFIX_LENGTH
-        assert set(suffix) <= set(_SUFFIX_ALPHABET)
+        # Readable alphabet: lowercase alphanumeric, no 0/o/1/l/i look-alikes.
+        assert suffix.isalnum()
+        assert suffix == suffix.lower()
+        assert not (set(suffix) & set("01loi"))
 
 
 @pytest.mark.asyncio
@@ -123,7 +125,8 @@ async def test_generate_slug_retries_on_collision(
         # one retry. The choice is deterministic via a forced rng seed below.
         await conn.execute(
             "INSERT INTO leagues (slug, name, host_user_id) "
-            f"VALUES ('tweezer-{'a' * SLUG_SUFFIX_LENGTH}', 'Seed', $1)",
+            "VALUES ($1, 'Seed', $2)",
+            f"tweezer-{'a' * SLUG_SUFFIX_LENGTH}",
             int(host_id),
         )
 
@@ -163,7 +166,8 @@ async def test_generate_slug_falls_back_after_max_attempts(
         )
         await conn.execute(
             "INSERT INTO leagues (slug, name, host_user_id) "
-            f"VALUES ('tweezer-{'a' * SLUG_SUFFIX_LENGTH}', 'Collide', $1)",
+            "VALUES ($1, 'Collide', $2)",
+            f"tweezer-{'a' * SLUG_SUFFIX_LENGTH}",
             int(host_id),
         )
 

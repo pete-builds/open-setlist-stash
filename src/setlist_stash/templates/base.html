@@ -145,17 +145,9 @@
     });
 
     // Confirmation prompt for destructive forms, delegated on <body>.
-    //
-    // This replaces onsubmit="return confirm('... league name ...')".
-    // That was an XSS sink: Jinja autoescaping renders a quote in the name as
-    // &#39;, and the HTML parser decodes entities BEFORE the attribute is
-    // compiled as JavaScript, so a league named `x'); evil(); ('` broke out of
-    // the string literal and ran in every member's session. Escaping for HTML
-    // does not escape for a JS string nested inside an HTML attribute.
-    //
-    // Reading the message from data-confirm keeps the value in plain
-    // HTML-attribute context, where autoescaping IS the right defence, and it
-    // never reaches a JS parser. Do not reintroduce an inline handler here.
+    // The message lives in data-confirm so a user-supplied value (a league
+    // name) stays in plain attribute context and never reaches a JS parser.
+    // Rationale in security_headers.py; do not inline this back into markup.
     document.body.addEventListener('submit', function (e) {
       var form = e.target;
       if (!form || typeof form.matches !== 'function') { return; }
