@@ -31,11 +31,18 @@ and ``CSP_EXTRA_CONNECT_SRC`` exist for exactly that: a deployment declares its
 own edge rather than the platform hardcoding one vendor.
 
 **Known weakness, stated plainly:** ``script-src`` includes ``'unsafe-inline'``.
-The templates carry 14 inline ``<script>`` blocks and three
-``onsubmit="return confirm(...)"`` attributes. Nonces do not cover inline event
-handlers, so a nonce-based policy would need those refactored first; and adding
-a nonce makes browsers ignore ``'unsafe-inline'``, so a half-migration is worse
-than either end state. The policy is still worth shipping: ``default-src
+The templates carry inline ``<script>`` blocks; a nonce-based policy needs those
+moved into ``/static/*.js`` first, and adding a nonce makes browsers ignore
+``'unsafe-inline'``, so a half-migration is worse than either end state.
+
+Inline event handlers are gone (0.3.0). The three
+``onsubmit="return confirm(...)"`` attributes became ``data-confirm`` read by a
+delegated listener in ``base.html``. That was not just nonce groundwork: one of
+them interpolated a user-chosen league name into a JS string literal, and
+autoescaping does not defend that context -- the HTML parser turns ``&#39;``
+back into a quote before the attribute is compiled as script, so the name broke
+out and ran in every other member's session. Values belong in plain attributes,
+where autoescaping is the right tool. The policy is still worth shipping: ``default-src
 'self'`` blocks an injected ``<script src="https://evil/">`` and blocks
 exfiltration to an attacker host, ``base-uri`` blocks ``<base>`` hijacking,
 ``object-src 'none'`` kills plugin vectors, and ``form-action 'self'`` stops a

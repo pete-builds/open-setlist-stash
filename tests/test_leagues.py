@@ -24,6 +24,8 @@ from setlist_stash.leagues import (
     LeagueHostCannotLeave,
     LeagueNameError,
     create_league,
+    SLUG_SUFFIX_LENGTH,
+    _SUFFIX_ALPHABET,
     generate_slug,
     get_league_by_slug,
     is_member,
@@ -87,9 +89,16 @@ def test_validate_window_rejects_inverted() -> None:
 @requires_pg
 async def test_generate_slug_shape(pg_pool: Any) -> None:
     slug = await generate_slug(pg_pool)
-    word, _, _suffix = slug.partition("-")
+    word, _, suffix = slug.partition("-")
     assert word in SLUG_WORDLIST or slug.startswith("x")
     assert len(slug) >= 3
+    # The suffix is the league's access control, not a collision tiebreaker:
+    # it must carry SLUG_SUFFIX_LENGTH chars of real randomness. A regression
+    # that shortens it back to 2 makes every league on the deployment
+    # enumerable, which is silent -- nothing else in the app would fail.
+    if not slug.startswith("x"):
+        assert len(suffix) == SLUG_SUFFIX_LENGTH
+        assert set(suffix) <= set(_SUFFIX_ALPHABET)
 
 
 @pytest.mark.asyncio
@@ -114,13 +123,17 @@ async def test_generate_slug_retries_on_collision(
         # one retry. The choice is deterministic via a forced rng seed below.
         await conn.execute(
             "INSERT INTO leagues (slug, name, host_user_id) "
-            "VALUES ('tweezer-aa', 'Seed', $1)",
+            f"VALUES ('tweezer-{'a' * SLUG_SUFFIX_LENGTH}', 'Seed', $1)",
             int(host_id),
         )
 
-    # Build an rng that returns ``tweezer`` first, then ``ghost``, with
-    # suffix chars 'a','a' (collision) then 'b','c' (fresh).
-    seq: list[Any] = ["tweezer", "a", "a", "ghost", "b", "c"]
+    # Build an rng that returns ``tweezer`` first, then ``ghost``. Each word is
+    # followed by SLUG_SUFFIX_LENGTH suffix draws: all 'a' (collides with the
+    # seeded row) then all 'b' (fresh).
+    seq: list[Any] = (
+        ["tweezer"] + ["a"] * SLUG_SUFFIX_LENGTH
+        + ["ghost"] + ["b"] * SLUG_SUFFIX_LENGTH
+    )
 
     class FakeRng:
         def choice(self, items: Any) -> Any:
@@ -128,7 +141,7 @@ async def test_generate_slug_retries_on_collision(
 
     fake = FakeRng()
     slug = await generate_slug(pg_pool, rng=fake)  # type: ignore[arg-type]
-    assert slug == "ghost-bc"
+    assert slug == "ghost-" + "b" * SLUG_SUFFIX_LENGTH
     _ = rng  # the real rng exists; we don't use it here but keep the import shape
 
 
@@ -150,7 +163,7 @@ async def test_generate_slug_falls_back_after_max_attempts(
         )
         await conn.execute(
             "INSERT INTO leagues (slug, name, host_user_id) "
-            "VALUES ('tweezer-aa', 'Collide', $1)",
+            f"VALUES ('tweezer-{'a' * SLUG_SUFFIX_LENGTH}', 'Collide', $1)",
             int(host_id),
         )
 

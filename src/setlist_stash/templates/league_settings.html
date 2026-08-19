@@ -47,7 +47,7 @@
       immediately. Existing players keep their spots.
     </p>
     <form method="post" action="/league/{{ league.slug }}/rotate"
-          onsubmit="return confirm('Rotate invite link? The old link stops working immediately.');">
+          data-confirm="Rotate invite link? The old link stops working immediately.">
       <button type="submit" class="btn">Rotate invite</button>
     </form>
   </div>
@@ -60,7 +60,7 @@
       they keep counting globally and in every other game.
     </p>
     <form method="post" action="/league/{{ league.slug }}/delete"
-          onsubmit="return confirm('Delete {{ league.name }}? This cannot be undone.');">
+          data-confirm="Delete {{ league.name }}? This cannot be undone.">
       <button type="submit" class="btn">Delete game</button>
     </form>
   </div>

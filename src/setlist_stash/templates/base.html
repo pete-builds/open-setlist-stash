@@ -143,6 +143,27 @@
       if (!form.matches('form[data-reset-on-success]')) { return; }
       if (e.detail && e.detail.successful) { form.reset(); }
     });
+
+    // Confirmation prompt for destructive forms, delegated on <body>.
+    //
+    // This replaces onsubmit="return confirm('... league name ...')".
+    // That was an XSS sink: Jinja autoescaping renders a quote in the name as
+    // &#39;, and the HTML parser decodes entities BEFORE the attribute is
+    // compiled as JavaScript, so a league named `x'); evil(); ('` broke out of
+    // the string literal and ran in every member's session. Escaping for HTML
+    // does not escape for a JS string nested inside an HTML attribute.
+    //
+    // Reading the message from data-confirm keeps the value in plain
+    // HTML-attribute context, where autoescaping IS the right defence, and it
+    // never reaches a JS parser. Do not reintroduce an inline handler here.
+    document.body.addEventListener('submit', function (e) {
+      var form = e.target;
+      if (!form || typeof form.matches !== 'function') { return; }
+      if (!form.matches('form[data-confirm]')) { return; }
+      if (!window.confirm(form.getAttribute('data-confirm'))) {
+        e.preventDefault();
+      }
+    });
   </script>
   <script>
     // Mobile nav toggle. Vanilla JS, no deps. The nav-toggle button is only
