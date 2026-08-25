@@ -78,6 +78,23 @@ class FixedWindowRateLimiter:
     single lock (uvicorn may run multiple worker threads for sync work; the lock
     keeps the bookkeeping consistent). State is per-process, which is fine for a
     single-container deployment — it caps abuse without an external store.
+
+    **Keys are evicted, not just drained.** Timestamps ageing out of a bucket is
+    not the same as the bucket going away: ``allow`` only ever touches the key
+    being asked about, so an address that is seen once and never returns leaves
+    an empty deque and a dict entry behind forever.
+
+    That is not a real leak today, and it is worth being precise about why,
+    because it changes with a config flag rather than with any code here. With
+    ``TRUSTED_CLIENT_IP_HEADER`` unset — the shipped default — the key is the
+    socket peer, which behind a tunnel is the connector container: one entry,
+    for the life of the process. Declaring the trusted header is what makes the
+    key a real client address, and the moment it does, this dict grows by one
+    entry per distinct visitor IP and never shrinks. So the growth is *armed by*
+    the very setting that makes the rate limit mean anything.
+
+    A stale key is swept at most once per window, which bounds retained keys to
+    roughly the distinct addresses seen in one window.
     """
 
     def __init__(self, per_minute: int, window_seconds: float = 60.0) -> None:
@@ -85,6 +102,10 @@ class FixedWindowRateLimiter:
         self._window = window_seconds
         self._hits: dict[str, deque[float]] = {}
         self._lock = Lock()
+        # Sweeps are scheduled off the first observed timestamp rather than a
+        # clock read here, so a limiter constructed at import time and first
+        # used much later does not sweep on its very first request.
+        self._next_sweep: float | None = None
 
     @property
     def enabled(self) -> bool:
@@ -105,9 +126,40 @@ class FixedWindowRateLimiter:
             while bucket and bucket[0] <= cutoff:
                 bucket.popleft()
             if len(bucket) >= self._per_minute:
+                # A blocked caller still leaves a populated bucket, so there is
+                # nothing to evict here; the sweep below reclaims it once the
+                # caller gives up and the timestamps age out.
+                self._sweep_if_due(ts)
                 return False
             bucket.append(ts)
+            self._sweep_if_due(ts)
             return True
+
+    def _sweep_if_due(self, ts: float) -> None:
+        """Drop keys with no timestamps left inside the window. Caller holds the lock.
+
+        Runs at most once per window. The cost is proportional to the number of
+        tracked keys, which is the thing being bounded, and it is paid by one
+        request per window rather than by every request.
+        """
+        if self._next_sweep is None:
+            self._next_sweep = ts + self._window
+            return
+        if ts < self._next_sweep:
+            return
+        self._next_sweep = ts + self._window
+        cutoff = ts - self._window
+        # A bucket's timestamps are appended in order, so the LAST one is the
+        # newest: if even that has aged out, the whole key is dead. Checking
+        # only bucket[-1] keeps the sweep O(keys) rather than O(timestamps).
+        stale = [key for key, hits in self._hits.items() if not hits or hits[-1] <= cutoff]
+        for key in stale:
+            del self._hits[key]
+
+    def tracked_keys(self) -> int:
+        """Number of keys currently held. Exposed for tests and diagnostics."""
+        with self._lock:
+            return len(self._hits)
 
 
 def _forward_request_headers(request: Request) -> dict[str, str]:

@@ -288,3 +288,59 @@ def _find_proxy(app: object) -> McpReverseProxy:
                 if isinstance(val, McpReverseProxy):
                     return val
     raise AssertionError("proxy not found on app")
+
+
+def test_rate_limiter_evicts_keys_that_go_quiet() -> None:
+    """A one-shot caller must not leave a dict entry behind forever.
+
+    Timestamps ageing out of a bucket is not the same as the bucket going away:
+    `allow` only touches the key being asked about, so without a sweep every
+    address ever seen is retained. That is invisible while
+    TRUSTED_CLIENT_IP_HEADER is unset (one key: the tunnel connector) and
+    unbounded the moment it is set, which is the recommended configuration.
+    """
+    limiter = FixedWindowRateLimiter(per_minute=5, window_seconds=60.0)
+    for i in range(100):
+        assert limiter.allow(f"10.0.0.{i}", now=1000.0)
+    assert limiter.tracked_keys() == 100
+
+    # One request a full window later, from someone new, pays for the sweep.
+    assert limiter.allow("10.9.9.9", now=1000.0 + 121.0)
+    assert limiter.tracked_keys() == 1
+
+
+def test_rate_limiter_keeps_keys_still_inside_the_window() -> None:
+    """The sweep must evict only the quiet, never an active abuser mid-block."""
+    limiter = FixedWindowRateLimiter(per_minute=2, window_seconds=60.0)
+    # A one-shot caller, whose single hit schedules the first sweep.
+    assert limiter.allow("one-shot", now=1000.0)
+    # An abuser who reaches the cap much later, still well inside the window.
+    assert limiter.allow("abuser", now=1050.0)
+    assert limiter.allow("abuser", now=1055.0)
+    assert limiter.tracked_keys() == 2
+
+    # A third caller trips the due sweep.
+    assert limiter.allow("other", now=1060.0)
+    # one-shot is gone; abuser survives it.
+    assert limiter.tracked_keys() == 2
+    assert not limiter.allow("abuser", now=1060.0)
+
+
+def test_rate_limiter_does_not_sweep_on_first_use() -> None:
+    """A limiter built at import time and first used hours later is not stale."""
+    limiter = FixedWindowRateLimiter(per_minute=5, window_seconds=60.0)
+    assert limiter.allow("first", now=9_999_999.0)
+    assert limiter.tracked_keys() == 1
+
+
+def test_rate_limiter_sweep_does_not_change_the_verdict() -> None:
+    """Eviction is bookkeeping: a swept-then-returning caller starts fresh anyway.
+
+    Their timestamps had aged out of the window regardless, so the answer is the
+    same with or without the sweep. This pins that equivalence.
+    """
+    limiter = FixedWindowRateLimiter(per_minute=1, window_seconds=60.0)
+    assert limiter.allow("returning", now=1000.0)
+    assert not limiter.allow("returning", now=1010.0)
+    # Long enough away to be swept, and long enough to be allowed again.
+    assert limiter.allow("returning", now=1500.0)
