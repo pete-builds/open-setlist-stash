@@ -75,9 +75,26 @@ def test_token_from_a_different_secret_is_rejected() -> None:
 
 
 def test_tampered_token_is_rejected() -> None:
+    """A modified signature must not validate.
+
+    The mutated character is deliberately NOT the last one. These tokens are 43
+    base64url characters carrying a 256-bit signature, and 43 * 6 = 258, so the
+    final character has two bits that decode to nothing. Flipping it can leave
+    the decoded signature bytes identical, in which case the "tampered" token is
+    genuinely valid and this test fails through no fault of the code.
+
+    That is not hypothetical. URLSafeTimedSerializer embeds the current time, so
+    the token differs every run; sweeping 2062 timestamps, the old last-character
+    flip left the signature unchanged for 135 of them. A roughly 6.5% failure
+    rate on a security test, which is exactly the kind that gets re-run until it
+    passes. A character inside the signature carries all six bits, and the same
+    sweep detects the tamper in 2062 of 2062.
+    """
     cfg = _cfg()
     token = sign_user_id(cfg, 42)
-    assert unsign_session(cfg, token[:-1] + ("A" if token[-1] != "A" else "B")) is None
+    i = len(token) - 8
+    tampered = token[:i] + ("A" if token[i] != "A" else "B") + token[i + 1 :]
+    assert unsign_session(cfg, tampered) is None
 
 
 def test_garbage_is_rejected() -> None:
