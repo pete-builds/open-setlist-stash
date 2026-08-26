@@ -33,11 +33,21 @@ FROM python:3.13.15-slim AS runtime
 
 # Apply Debian security patches on top of the pinned base. Keeps the digest
 # pin for reproducibility while picking up CVE fixes between base rebuilds.
-# CACHE_BUST is referenced inside the RUN so BuildKit's gha cache (cache-from/
-# cache-to: type=gha in CI) cannot replay a stale apt layer that predates the
-# latest Debian security fixes. Bump the date to force a fresh apt upgrade.
-ARG CACHE_BUST=2026-06-15
-RUN echo "cache-bust: ${CACHE_BUST}" && apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
+# This used to be `ARG CACHE_BUST=<date>` echoed inside the RUN, with a note to
+# bump the date by hand. The reasoning was right and the mechanism did not work:
+# no workflow passes --build-arg CACHE_BUST, so the arg sat at its default and
+# BuildKit's gha cache replayed the layer regardless. The default had not moved
+# since 2026-06-15, and on 2026-08-26 the Trivy gate was failing every PR in
+# this repo on libssl3t64 CVE-2026-14456 while trixie-security had carried the
+# fixed 3.5.7-1~deb13u2 for some time. A cache-bust that depends on someone
+# remembering is stale exactly when it matters.
+#
+# trixie-security's Release file changes when and only when a security update
+# is published, so keying the layer to it rebuilds precisely when there is
+# something to install, with no date to maintain and nothing for CI to pass.
+ADD https://deb.debian.org/debian-security/dists/trixie-security/Release /tmp/debian-security-release
+RUN apt-get update && apt-get -y upgrade \
+    && rm -rf /tmp/debian-security-release /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
