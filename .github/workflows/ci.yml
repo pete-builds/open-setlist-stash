@@ -165,28 +165,24 @@ jobs:
 
       - name: Build (no push)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        env:
+          # Buildx uploads a .dockerbuild build record as an artifact on every
+          # run. 731 of them were live across the fleet, none ever read.
+          DOCKER_BUILD_SUMMARY: false
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           push: false
           load: true
           tags: setlist-stash:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Save image for scan job
-        run: docker save setlist-stash:ci -o /tmp/setlist-stash.tar
-
-      # This tarball exists only to hand the image to the trivy-scan job below.
-      # It is dead weight the moment that job finishes, so keep it for the
-      # minimum GitHub allows rather than the default week. The two jobs cannot
-      # be merged (which would remove the upload entirely) because branch
-      # protection on main requires both "Build Docker image" and
-      # "Trivy security scan" as separate status checks.
-      - uses: actions/upload-artifact@v7
-        with:
-          name: docker-image
-          path: /tmp/setlist-stash.tar
-          retention-days: 1
+          # ignore-error keeps a failed cache *export* from failing the build.
+          # `failed to reserve cache` is a race, not a quota: concurrent runs on
+          # different refs export the same layer keys at once and the loser
+          # errors out. The concurrency group above is keyed on github.ref, so
+          # it never serialises two different PRs against each other. A missed
+          # export only costs the next build a cache hit.
+          cache-to: type=gha,mode=max,ignore-error=true
 
   trivy-scan:
     name: Trivy security scan
@@ -195,13 +191,32 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v8
-        with:
-          name: docker-image
-          path: /tmp
+      # The image is rebuilt here instead of being handed over as a saved
+      # tarball. That tarball was 95 MB per run and, at six live runs, on its
+      # own exceeded the account's entire 500 MB Actions storage allowance,
+      # which blocked artifact uploads across every repo in the fleet.
+      #
+      # Branch protection on main still requires "Build Docker image" and
+      # "Trivy security scan" as separate status checks, so the two jobs stay
+      # split. The layer cache the build job just populated makes this a cache
+      # hit rather than a second real build.
+      #
+      # This cannot pass vacuously: on a cache miss the image is still built
+      # from source, and a build failure fails this job before Trivy runs.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
-      - name: Load image
-        run: docker load -i /tmp/setlist-stash.tar
+      - name: Rebuild image from the build job's layer cache
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        env:
+          DOCKER_BUILD_SUMMARY: false
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          push: false
+          load: true
+          tags: setlist-stash:ci
+          cache-from: type=gha
 
       - name: Trivy fs scan (Dockerfile + lockfiles)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
