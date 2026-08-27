@@ -176,7 +176,13 @@ jobs:
           load: true
           tags: setlist-stash:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # ignore-error keeps a failed cache *export* from failing the build.
+          # `failed to reserve cache` is a race, not a quota: concurrent runs on
+          # different refs export the same layer keys at once and the loser
+          # errors out. The concurrency group above is keyed on github.ref, so
+          # it never serialises two different PRs against each other. A missed
+          # export only costs the next build a cache hit.
+          cache-to: type=gha,mode=max,ignore-error=true
 
   trivy-scan:
     name: Trivy security scan
