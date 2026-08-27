@@ -3,38 +3,32 @@
 {% block content %}
   <h1>Sign in</h1>
 
-  {% if google_oauth_enabled %}
-    <p>
-      <a class="btn btn-primary" href="/auth/google/start">Sign in with Google</a>
-    </p>
-    {% if provider_enabled %}
-      <p class="muted">Or sign in with the email attached to your handle:</p>
-    {% endif %}
-  {% endif %}
-
-  <h2>Sign in by email</h2>
-  <p>
-    Enter the email attached to your {{ site_name }} handle. We'll send a one-time
-    sign-in link.
-  </p>
-  <p class="muted">
-    Don't have an account, or never added an email?
-    <a href="/">Pick a fresh handle</a>.
-  </p>
-
   {% if error %}
     <p class="error">{{ error }}</p>
   {% endif %}
 
-  {% if not provider_enabled %}
-    <div class="card error-card">
-      <p>
-        Email is currently disabled on this server. Sign in by email is
-        unavailable. Use the same browser where you originally created your
-        handle, or pick a fresh handle.
-      </p>
-    </div>
-  {% else %}
+  {% if google_oauth_enabled %}
+    <p>
+      <a class="btn btn-primary" href="/auth/google/start">Sign in with Google</a>
+    </p>
+    <p class="muted">
+      Google sign-in carries your handle, your picks, and your place on the
+      leaderboard across browsers and devices.
+    </p>
+  {% endif %}
+
+  {# The email/magic-link block renders only where a provider is configured.
+     A deployment with EMAIL_PROVIDER=disabled (the default, and both hosted
+     tenants) used to show this heading followed by a red "email is currently
+     disabled" card, which read as a broken feature rather than a feature that
+     was never on. Nothing about the operator's config belongs on a player's
+     sign-in page: if email is off, the page simply doesn't mention email. #}
+  {% if provider_enabled %}
+    <h2>Sign in by email</h2>
+    <p>
+      Enter the email attached to your {{ site_name }} handle. We'll send a
+      one-time sign-in link.
+    </p>
     <form method="post" action="/auth/login">
       <label for="email">Email address</label>
       <input type="email" id="email" name="email" required maxlength="320"
@@ -42,4 +36,19 @@
       <button type="submit" class="btn">Send me a sign-in link</button>
     </form>
   {% endif %}
+
+  {% if not google_oauth_enabled and not provider_enabled %}
+    {# Neither cross-browser method is configured. Reachable only by typing the
+       URL, since the nav "Sign in" link is itself gated on one of these. #}
+    <div class="card">
+      <p>
+        {{ site_name }} keeps your handle in this browser. Play from the browser
+        where you created it, or <a href="/">pick a fresh handle</a>.
+      </p>
+    </div>
+  {% endif %}
+
+  <p class="muted">
+    New here? <a href="/">Pick a handle and start playing</a>.
+  </p>
 {% endblock %}
