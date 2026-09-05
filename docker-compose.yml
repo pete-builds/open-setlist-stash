@@ -73,6 +73,44 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  setlist-stash-reminders:
+    # Same image as the app; different command. Sleeps until
+    # REMINDER_HOUR_LOCAL in DISPLAY_TZ, then mails show-day pick reminders to
+    # verified, non-opted-out players who have not picked yet.
+    #
+    # Its own service rather than a branch inside the resolver loop: the
+    # resolver's cadence swings between 60s and 30 minutes around a show, so
+    # "fire at 09:00" would land up to half an hour late there, and a fault in
+    # reminder mail must not be able to stall the loop that scores the game.
+    #
+    # Inert unless REMINDER_ENABLED=true in this deployment's .env, so the OSS
+    # image and any third-party self-host run it as a sleeping no-op.
+    build: .
+    image: setlist-stash:0.3.0
+    container_name: setlist-stash-reminders
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M
+    env_file:
+      - .env
+    environment:
+      TZ: "${TZ:-UTC}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - default
+      - mcp-phish
+    entrypoint: ["python", "-m", "setlist_stash.reminders", "--loop"]
+    # Same reasoning as the resolver: the image's inherited HTTP healthcheck
+    # targets the FastAPI app, which this container does not run.
+    healthcheck:
+      disable: true
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+
   postgres:
     image: postgres:16-alpine
     container_name: setlist-stash-pg
