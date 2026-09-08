@@ -7,6 +7,7 @@ All values come from environment variables (or `.env` in dev). Secrets use
 from __future__ import annotations
 
 from datetime import date
+from urllib.parse import quote
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -509,11 +510,17 @@ class Settings(BaseSettings):
 
     @property
     def pg_dsn(self) -> str:
-        """Build an asyncpg-compatible Postgres DSN."""
-        return (
-            f"postgresql://{self.pg_user}:{self.pg_password.get_secret_value()}"
-            f"@{self.pg_host}:{self.pg_port}/{self.pg_db}"
-        )
+        """Build an asyncpg-compatible Postgres DSN.
+
+        User and password are percent-encoded. A generated password routinely
+        contains ``@``, ``/``, ``:`` or ``#``; interpolated raw, asyncpg reads
+        ``@`` as the host separator and ``#`` as a fragment, so the pool
+        silently targets the wrong host or fails on the port with an error
+        that never mentions the password. asyncpg unquotes both fields.
+        """
+        user = quote(self.pg_user, safe="")
+        password = quote(self.pg_password.get_secret_value(), safe="")
+        return f"postgresql://{user}:{password}@{self.pg_host}:{self.pg_port}/{self.pg_db}"
 
 
 def get_settings() -> Settings:

@@ -300,3 +300,85 @@ async def test_initialize_handshake_sends_two_posts_and_session_header() -> None
     third_body = json.loads(third.content.decode())
     assert third_body["method"] == "tools/call"
     assert third_body["params"]["name"] == "health"
+
+
+# --- handshake concurrency and session teardown --------------------------------
+
+
+class _YieldingUpstream:
+    """A fake Streamable-HTTP upstream that yields to the event loop on each
+    request, the way a real socket would. A non-yielding fake lets the first
+    ``initialize`` complete before the second caller even looks at the flag,
+    which hides the race this test exists to catch."""
+
+    def __init__(self) -> None:
+        self.methods: list[str] = []
+        self.sessions_opened = 0
+        self.deletes: list[str | None] = []
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        import asyncio
+
+        await asyncio.sleep(0)
+        if request.method == "DELETE":
+            self.deletes.append(request.headers.get("mcp-session-id"))
+            return httpx.Response(200)
+        body = json.loads(request.content.decode())
+        method = str(body.get("method"))
+        self.methods.append(method)
+        if method == "initialize":
+            self.sessions_opened += 1
+            return httpx.Response(
+                200,
+                headers={
+                    "content-type": "application/json",
+                    "mcp-session-id": f"s{self.sessions_opened}",
+                },
+                json={"jsonrpc": "2.0", "id": body["id"], "result": {"capabilities": {}}},
+            )
+        if method == "notifications/initialized":
+            return httpx.Response(202)
+        return httpx.Response(
+            200, json=_mcp_response({"slug": "tweezer", "title": "Tweezer"}, body["id"])
+        )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_calls_share_one_handshake() -> None:
+    """Five concurrent ``get_song`` calls on one client must open exactly one
+    upstream session. Before the lock, each caller ran its own handshake and
+    four sessions were abandoned on mcp-phish per page render."""
+    import asyncio
+
+    upstream = _YieldingUpstream()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+    async with McpPhishClient(URL, client=http) as c:
+        await asyncio.gather(*(c.get_song("tweezer") for _ in range(5)))
+    assert upstream.sessions_opened == 1
+    assert upstream.methods.count("initialize") == 1
+    assert upstream.methods.count("notifications/initialized") == 1
+    assert upstream.methods.count("tools/call") == 5
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_exit_sends_delete_for_the_session() -> None:
+    """Streamable HTTP ends a session with ``DELETE`` carrying the session id.
+    Without it every client context leaves a session for the upstream to
+    garbage-collect."""
+    upstream = _YieldingUpstream()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+    async with McpPhishClient(URL, client=http) as c:
+        await c.get_song("tweezer")
+    assert upstream.deletes == ["s1"]
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_exit_without_a_session_sends_no_delete() -> None:
+    upstream = _YieldingUpstream()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+    async with McpPhishClient(URL, client=http):
+        pass
+    assert upstream.deletes == []
+    await http.aclose()

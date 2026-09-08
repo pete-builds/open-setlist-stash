@@ -479,44 +479,63 @@ async def _rebuild_bucketed(
 # ----- read helpers ---------------------------------------------------------
 
 
+_SEASON_ORDER = {"spring": 1, "summer": 2, "fall": 3, "winter": 4}
+
+
+def _season_sort_key(key: str) -> tuple[int, int, int, str]:
+    """Sort key for a ``YYYY-<season>`` bucket: newest first when reversed.
+
+    Season names do not sort by calendar as text (``summer`` > ``fall`` >
+    ``spring``), so the year and the season's position in it are compared as
+    numbers. A key that is not ``YYYY-<season>`` sorts below every well-formed
+    one so a stray bucket can never be picked as "newest".
+    """
+    year_s, _, season = key.partition("-")
+    rank = _SEASON_ORDER.get(season)
+    if rank is not None and year_s.isdigit():
+        return (1, int(year_s), rank, key)
+    return (0, 0, 0, key)
+
+
+def sort_scope_keys(scope: str, keys: list[str]) -> list[str]:
+    """Order bucket keys newest first for ``scope``.
+
+    Weekly keys (``2026-W18``) are zero-padded and sort correctly as text.
+    Season keys (``2026-fall``) do not: ``2026-summer`` > ``2026-fall`` as
+    text, which opened the Season tab on the summer board all autumn. Run and
+    league keys are operator-chosen slugs with no natural order, so text
+    order is kept for them.
+    """
+    if scope == "tour":
+        return sorted(keys, key=_season_sort_key, reverse=True)
+    return sorted(keys, reverse=True)
+
+
 async def list_scope_keys(
     pool: asyncpg.Pool[Any], scope: str
 ) -> list[str]:
-    """Return the distinct scope_keys for a scope, ordered desc (newest first)."""
+    """Return the distinct scope_keys for a scope, newest first."""
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT DISTINCT scope_key
               FROM leaderboard_snapshots
              WHERE scope = $1
-             ORDER BY scope_key DESC
             """,
             scope,
         )
-    return [str(r["scope_key"]) for r in rows]
+    return sort_scope_keys(scope, [str(r["scope_key"]) for r in rows])
 
 
 async def latest_scope_key(pool: asyncpg.Pool[Any], scope: str) -> str | None:
     """Return the most recent scope_key for a scope, or None if empty.
 
-    "Most recent" is defined as max(scope_key) lexicographically — which is
-    correct for our keys (``2026-W18`` > ``2026-W17``, ``2026-spring`` >
-    ``2025-winter``, ``all`` is the only one for ``all_time``).
+    "Most recent" is the first key of :func:`sort_scope_keys`, which orders
+    season buckets by calendar rather than by string. ``all`` is the only key
+    for ``all_time``.
     """
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT scope_key
-              FROM leaderboard_snapshots
-             WHERE scope = $1
-             ORDER BY scope_key DESC
-             LIMIT 1
-            """,
-            scope,
-        )
-    if row is None:
-        return None
-    return str(row["scope_key"])
+    keys = await list_scope_keys(pool, scope)
+    return keys[0] if keys else None
 
 
 async def fetch_leaderboard(
