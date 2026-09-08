@@ -174,6 +174,52 @@ async def _expire_outstanding(
     return len(ids)
 
 
+async def _retire_tokens_for_other_addresses(
+    conn: asyncpg.Connection[Any],
+    *,
+    user_id: int,
+    purpose: str,
+    keep_email: str | None,
+) -> int:
+    """Consume every outstanding token for ``user_id`` whose bound address is
+    not ``keep_email`` (``None`` retires them all).
+
+    Called whenever the address on a ``users`` row changes, so a link emailed
+    to the OLD address can never verify the NEW one. Tokens minted before
+    migration 013 have no address and are retired too. Returns rows changed.
+    """
+    if keep_email is None:
+        result = await conn.execute(
+            """
+            UPDATE auth_tokens
+               SET consumed_at = now()
+             WHERE user_id = $1
+               AND purpose = $2
+               AND consumed_at IS NULL
+            """,
+            user_id,
+            purpose,
+        )
+    else:
+        result = await conn.execute(
+            """
+            UPDATE auth_tokens
+               SET consumed_at = now()
+             WHERE user_id = $1
+               AND purpose = $2
+               AND consumed_at IS NULL
+               AND lower(COALESCE(email, '')) <> $3
+            """,
+            user_id,
+            purpose,
+            keep_email,
+        )
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
 async def request_email_link(
     pool: asyncpg.Pool[Any],
     *,
@@ -203,40 +249,68 @@ async def request_email_link(
     token_hash = _hash_token(token)
 
     async with pool.acquire() as conn, conn.transaction():
-        # Refuse if a DIFFERENT verified user already owns this email.
-        # Unverified ownership is fine to clobber: the rightful owner has
-        # 24h to claim it via their inbox.
-        clash = await conn.fetchrow(
+        # Refuse if a DIFFERENT verified user already owns this email. An
+        # UNVERIFIED holder may be clobbered (the rightful owner has their
+        # inbox), but migration 003's unique index covers unverified rows
+        # too, so the holder's address has to be cleared in this transaction
+        # or the UPDATE below raises UniqueViolationError and the player sees
+        # a 500. Clearing it also retires the holder's outstanding links: a
+        # token for an address the row no longer carries must never verify.
+        holder = await conn.fetchrow(
             """
-            SELECT id FROM users
+            SELECT id, email_verified_at FROM users
              WHERE lower(email) = $1
-               AND email_verified_at IS NOT NULL
                AND id <> $2
              LIMIT 1
             """,
             canonical,
             user.id,
         )
-        if clash is not None:
-            raise EmailTakenError(
-                "That email is already attached to another verified handle."
+        if holder is not None:
+            if holder["email_verified_at"] is not None:
+                raise EmailTakenError(
+                    "That email is already attached to another verified handle."
+                )
+            holder_id = int(holder["id"])
+            await conn.execute(
+                """
+                UPDATE users
+                   SET email = NULL, email_verified_at = NULL
+                 WHERE id = $1 AND email_verified_at IS NULL
+                """,
+                holder_id,
+            )
+            await _retire_tokens_for_other_addresses(
+                conn, user_id=holder_id, purpose="email_verify", keep_email=None
             )
         # Attach the email (no verification yet). If the user is changing
-        # their email mid-flow, this overwrites the previous unverified one
-        # and we expire any older outstanding tokens.
-        await conn.execute(
-            """
-            UPDATE users
-               SET email = $2,
-                   email_verified_at = CASE
-                       WHEN lower(COALESCE(email, '')) = $3 THEN email_verified_at
-                       ELSE NULL
-                   END
-             WHERE id = $1
-            """,
-            user.id,
-            canonical,
-            canonical,
+        # their email mid-flow, this overwrites the previous unverified one.
+        try:
+            await conn.execute(
+                """
+                UPDATE users
+                   SET email = $2,
+                       email_verified_at = CASE
+                           WHEN lower(COALESCE(email, '')) = $3 THEN email_verified_at
+                           ELSE NULL
+                       END
+                 WHERE id = $1
+                """,
+                user.id,
+                canonical,
+                canonical,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            # Lost a race with another request for the same address between
+            # the holder check and the write. Same answer as a verified clash.
+            raise EmailTakenError(
+                "That email is already attached to another handle."
+            ) from exc
+        # Every outstanding link minted for a DIFFERENT address on this row is
+        # now dead. This is the fix for the takeover: without it the first
+        # link survives the address change and verifies the new address.
+        await _retire_tokens_for_other_addresses(
+            conn, user_id=user.id, purpose="email_verify", keep_email=canonical
         )
         # Rate-limit: max N outstanding for (user_id, 'email_verify').
         await _expire_outstanding(
@@ -248,12 +322,13 @@ async def request_email_link(
         await conn.execute(
             """
             INSERT INTO auth_tokens
-                (user_id, purpose, token_hash, expires_at)
-            VALUES ($1, 'email_verify', $2, $3)
+                (user_id, purpose, token_hash, expires_at, email)
+            VALUES ($1, 'email_verify', $2, $3, $4)
             """,
             user.id,
             token_hash,
             expires_at,
+            canonical,
         )
 
     # Send the email AFTER the DB commit so a transient SMTP failure
@@ -322,12 +397,13 @@ async def request_login_link(
         await conn.execute(
             """
             INSERT INTO auth_tokens
-                (user_id, purpose, token_hash, expires_at)
-            VALUES ($1, 'login', $2, $3)
+                (user_id, purpose, token_hash, expires_at, email)
+            VALUES ($1, 'login', $2, $3, $4)
             """,
             user_id,
             token_hash,
             expires_at,
+            canonical,
         )
 
     link = build_magic_link(settings.base_url, token)
@@ -365,6 +441,7 @@ async def verify_token(
         row = await conn.fetchrow(
             """
             SELECT t.id, t.user_id, t.purpose, t.expires_at, t.consumed_at,
+                   t.email AS token_email,
                    u.handle, u.email
               FROM auth_tokens t
               JOIN users u ON u.id = t.user_id
@@ -392,6 +469,20 @@ async def verify_token(
 
         purpose = str(row["purpose"])
         user_id = int(row["user_id"])
+        # The link was emailed to one address. It may only act on the row
+        # while the row still carries that address. A token minted before
+        # migration 013 carries none and is refused for the same reason.
+        token_email = row["token_email"]
+        row_email = row["email"]
+        if (
+            token_email is None
+            or row_email is None
+            or str(token_email).lower() != str(row_email).lower()
+        ):
+            raise LookupError(
+                "This link no longer matches the email on the account. "
+                "Request a new one."
+            )
         await conn.execute(
             """
             UPDATE auth_tokens

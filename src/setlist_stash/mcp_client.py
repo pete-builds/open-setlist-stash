@@ -21,6 +21,7 @@ future analytics code all speak one name.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import secrets
@@ -69,6 +70,10 @@ class McpPhishClient:
         self._owns_client = client is None
         self._session_id: str | None = None
         self._initialized: bool = False
+        # Serialises the handshake. Callers that arrive concurrently (the
+        # predict form resolves up to five songs with one gather) must share
+        # one session rather than each opening their own and abandoning four.
+        self._init_lock = asyncio.Lock()
 
     async def __aenter__(self) -> McpPhishClient:
         if self._client is None:
@@ -76,11 +81,30 @@ class McpPhishClient:
         return self
 
     async def __aexit__(self, *_: object) -> None:
+        await self._close_session()
         if self._owns_client and self._client is not None:
             await self._client.aclose()
             self._client = None
         self._session_id = None
         self._initialized = False
+
+    async def _close_session(self) -> None:
+        """End the Streamable HTTP session with ``DELETE`` + ``mcp-session-id``.
+
+        Best effort: a failure here is the upstream's garbage collector's
+        problem, not the caller's, so nothing is raised.
+        """
+        if self._client is None or not self._session_id:
+            return
+        try:
+            await self._client.delete(
+                self._url, headers={"mcp-session-id": self._session_id}
+            )
+        except Exception as exc:  # teardown must not raise
+            # Anything the transport throws here (network, a test transport
+            # with no DELETE route, an upstream that never heard of DELETE) is
+            # the upstream's garbage collector's problem, not the caller's.
+            logger.debug("mcp session DELETE failed: %s", exc)
 
     async def _initialize(self) -> None:
         """Run the FastMCP Streamable HTTP handshake.
@@ -88,10 +112,17 @@ class McpPhishClient:
         1. POST ``initialize`` (response carries ``mcp-session-id`` header)
         2. POST ``notifications/initialized`` (notification; 202 expected)
 
-        Idempotent — subsequent calls re-use the session id.
+        Idempotent — subsequent calls re-use the session id. Concurrent first
+        callers queue on one lock; all but the first find the flag already
+        set when they acquire it. The flag is read under the lock only, which
+        is also what keeps mypy from proving the second read unreachable.
         """
-        if self._initialized:
-            return
+        async with self._init_lock:
+            if self._initialized:
+                return
+            await self._handshake()
+
+    async def _handshake(self) -> None:
         if self._client is None:
             raise McpPhishError("client not entered (use async with)")
         init_body = {

@@ -657,14 +657,18 @@ async def user_profile(
         # Pick history, newest show first. Join the lock so we know whether
         # each show is post-lock (picks revealable) and resolved (score
         # final). Pre-lock shows list the date + "locked until showtime"
-        # rather than the picks, to stay fair-play safe.
+        # rather than the picks, to stay fair-play safe. The EFFECTIVE lock
+        # is COALESCE(lock_at_override, lock_at), same as the predict form,
+        # the per-show page and the migration 010 trigger: reading the raw
+        # column revealed picks from the default cutoff until a later
+        # operator override while they were still editable.
         rows = await conn.fetch(
             """
             SELECT p.show_date,
                    p.pick_song_slugs,
                    p.encore_slug,
                    p.score,
-                   pl.lock_at,
+                   COALESCE(pl.lock_at_override, pl.lock_at) AS lock_at,
                    pl.resolved_at
               FROM predictions p
               LEFT JOIN prediction_locks pl ON pl.show_date = p.show_date
