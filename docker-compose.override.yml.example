@@ -6,6 +6,13 @@
 #   2) Mount custom templates that override packaged ones
 #
 # Compose loads docker-compose.override.yml automatically on `up`.
+#
+# If your deployment pins services to an immutable image tag here rather than
+# building, remember the file lists THREE app services now:
+# `setlist-stash`, `setlist-stash-resolver` and `setlist-stash-reminders`.
+# A service left unpinned falls back to the base file's plain `:<version>`
+# tag, which on a build-locally deployment does not exist, so compose tries a
+# registry pull and the whole `up` fails.
 
 services:
   setlist-stash:

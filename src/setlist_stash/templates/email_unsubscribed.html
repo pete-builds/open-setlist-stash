@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Unsubscribed — {{ site_name }}{% endblock %}
+{% block content %}
+  <h1>You're unsubscribed</h1>
+  <div class="card">
+    <p>No more show-day pick reminders.</p>
+    <p class="muted">
+      Sign-in links still work: this only turned off the reminder emails.
+      Changed your mind? Sign in and switch reminders back on from
+      <a href="/account">your account page</a>.
+    </p>
+    <p><a class="btn" href="/">Back to {{ site_name }}</a></p>
+  </div>
+{% endblock %}

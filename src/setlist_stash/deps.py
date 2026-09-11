@@ -11,8 +11,10 @@ attached to ``app.state`` in ``build_app`` and returned by these providers.
 
 from __future__ import annotations
 
+from datetime import datetime
 from functools import partial
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from authlib.integrations.starlette_client import OAuth
 from fastapi import Depends, Request
@@ -36,6 +38,22 @@ from setlist_stash.web_helpers import (
     _compute_asset_version,
     display_dt,
 )
+
+
+def _reminder_time_label(cfg: Settings) -> str:
+    """Render the reminder send time for humans, in DISPLAY_TZ.
+
+    Uses today's date only to resolve the zone abbreviation (EDT vs EST), so
+    the label a player reads matches the offset the job will actually use.
+    """
+    tz = ZoneInfo(cfg.display_tz)
+    stamp = datetime.now(tz=tz).replace(
+        hour=cfg.reminder_hour_local,
+        minute=cfg.reminder_minute_local,
+        second=0,
+        microsecond=0,
+    )
+    return stamp.strftime("%-I:%M %p %Z")
 
 
 def build_templates(cfg: Settings, provider: EmailProvider) -> Jinja2Templates:
@@ -85,6 +103,14 @@ def build_templates(cfg: Settings, provider: EmailProvider) -> Jinja2Templates:
     # provider is disabled (default), so the email entry points disappear for
     # any deployment without email configured.
     templates.env.globals["email_enabled"] = provider.name != "disabled"
+    # Whether the show-day reminder opt-in renders on the account page at all.
+    # Separate from ``email_enabled`` on purpose: a deployment can have working
+    # transactional mail (sign-in links) and no reminder job, and offering a
+    # toggle for mail nothing sends is worse than offering nothing.
+    templates.env.globals["reminders_enabled"] = cfg.reminder_enabled
+    # "9:00 AM EDT" — built from the same settings the job schedules on, with a
+    # DST-correct zone label, so the page cannot drift from what actually runs.
+    templates.env.globals["reminder_time_label"] = _reminder_time_label(cfg)
     # Whether the "Sign in with Google" entry points render at all. True only
     # when a Google OAuth client is fully configured for this deployment; empty
     # (the default) leaves every Google button off and the /auth/google/* routes

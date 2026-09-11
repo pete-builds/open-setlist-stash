@@ -28,6 +28,25 @@
         </p>
         <p><a class="btn" href="/auth/email">Add email</a></p>
       {% endif %}
+
+      {# Reminder opt-in. Only offered to a VERIFIED address: there is nothing
+         to subscribe an unverified or absent address to, and showing the
+         control anyway would promise mail that never arrives. #}
+      {% if reminders_enabled and email_enabled and status.verified %}
+        <form method="post" action="/account/email-prefs" class="stack">
+          <label>
+            <input type="checkbox" name="reminders" value="on"
+                   {% if reminders_on %}checked{% endif %}>
+            Email me on show days when I haven't made my picks
+          </label>
+          <p class="muted">
+            One message at {{ reminder_time_label }}, only on days there's a
+            show, and only if your picks aren't in yet. Sign-in links are
+            unaffected either way.
+          </p>
+          <button class="btn" type="submit">Save reminder setting</button>
+        </form>
+      {% endif %}
     {% else %}
       <p class="muted">
         Your handle is anonymous-only. Keep playing from this browser; your
