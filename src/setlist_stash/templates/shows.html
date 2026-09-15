@@ -16,8 +16,8 @@
           <tr>
             <td class="show-date" data-label="Show"><a href="/show/{{ s.show_date }}/predictions">{{ s.show_date }}</a></td>
             <td class="muted" data-label="Venue">{{ s.venue or '-' }}</td>
-            <td class="num" data-label="Players">{{ s.entrants or 0 }}</td>
-            <td class="muted" data-label="Status">{% if s.resolved %}Final{% else %}Open{% endif %}</td>
+            <td class="num" data-label="Players">{% if s.scheduled %}&mdash;{% else %}{{ s.entrants or 0 }}{% endif %}</td>
+            <td class="muted" data-label="Status">{% if s.resolved %}Final{% elif s.scheduled %}Scheduled{% else %}Open{% endif %}</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -26,11 +26,13 @@
 {% endmacro %}
 {% block content %}
   <h1>Shows</h1>
-  <p class="muted">Every show with picks. Tap a row for its leaderboard.</p>
+  <p class="muted">Every announced show. Tap a row for its leaderboard.</p>
 
   {% if upcoming %}
     <h2>Upcoming &amp; open</h2>
     {{ show_table(upcoming) }}
+    <p class="muted">Picks open one show at a time. &ldquo;Scheduled&rdquo; dates are
+      announced and not open yet &mdash; the sheet opens as the tour reaches them.</p>
   {% endif %}
 
   {% if upcoming and past %}

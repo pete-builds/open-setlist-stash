@@ -36,6 +36,7 @@ from setlist_stash.mcp_client import McpPhishClient, McpPhishError
 from setlist_stash.predictions import count_entrants
 from setlist_stash.web_helpers import (
     _format_lock,
+    build_show_index,
     home_card_state,
     home_show_pointers,
     upcoming_show_date,
@@ -297,13 +298,20 @@ async def shows_index(
     cfg: Settings = Depends(get_cfg),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> HTMLResponse:
-    """Archive index of every show that's had a prediction lock.
+    """Archive of every show the game has opened, plus the announced tour.
 
     Read-only, no schema change. One row per ``prediction_locks`` show,
-    newest first, with an entrant count (LEFT JOIN predictions) and a
-    finalized flag (``resolved_at IS NOT NULL``). Each row links to that
-    show's per-show leaderboard. Venue names are best-effort via mcp-phish
-    and degrade to the bare date when upstream is down.
+    with an entrant count (LEFT JOIN predictions) and a finalized flag
+    (``resolved_at IS NOT NULL``). Each row links to that show's per-show
+    leaderboard. Venue names are best-effort via mcp-phish and degrade to
+    the bare date when upstream is down.
+
+    The game opens ONE show at a time, so ``prediction_locks`` alone showed
+    a single future date and hid the rest of an announced tour. The same
+    ``search_shows`` scan that fills in venue names also collects every
+    announced date on or after today; :func:`build_show_index` merges the
+    ones with no lock row in as ``scheduled``. No extra upstream calls, and
+    an unreachable MCP degrades to exactly the old locked-only list.
     """
     pool = get_pool()
     async with pool.acquire() as conn:
@@ -319,44 +327,41 @@ async def shows_index(
              ORDER BY pl.show_date DESC
             """
         )
-    # Best-effort venue lookup, keyed by ISO date. Query each year present
-    # in the archive via search_shows (covers played + announced-future
-    # shows for the whole tour), instead of a date-DESC recent_shows window
-    # that misses the earliest tour dates once far-future shows exist.
-    # Degrade to bare dates if upstream is down so the archive always renders.
+    # "Today" in the display timezone, never the container's UTC: at 8pm
+    # Eastern a UTC date has already rolled over, which would move tonight's
+    # show into "Past shows" mid-set.
+    today = datetime.now(tz=ZoneInfo(cfg.display_tz)).date()
+    # One scan, two jobs. Venue lookup is keyed by ISO date; the same rows
+    # yield every announced date on or after today so the rest of the tour
+    # can be listed. Query by year via search_shows rather than a date-DESC
+    # recent_shows window, which misses the earliest tour dates once
+    # far-future shows exist. Scan the archive's years PLUS this year and
+    # next, or an announced date beyond the archive's last locked show would
+    # never be looked at. Degrade to the locked-only list with bare dates if
+    # upstream is down, so /shows always renders.
     venue_by_date: dict[str, str] = {}
-    years = sorted({r["show_date"].year for r in rows})
+    announced: list[date] = []
+    years = sorted({r["show_date"].year for r in rows} | {today.year, today.year + 1})
     try:
         async with McpPhishClient(
             cfg.mcp_phish_url, timeout_seconds=cfg.mcp_phish_timeout_seconds
         ) as mcp:
             for yr in years:
-                for row in await mcp.search_shows(year=yr, limit=120):
+                for row in await mcp.search_shows(year=yr, limit=200):
                     d = str(row.get("date") or "")
                     name = row.get("venue_name") or row.get("location") or ""
                     if d and name:
                         venue_by_date[d] = str(name)
+                    try:
+                        parsed = date.fromisoformat(d)
+                    except ValueError:
+                        # One unparseable upstream row must not blank the page.
+                        continue
+                    if parsed >= today:
+                        announced.append(parsed)
     except McpPhishError:
         logger.warning("mcp-phish unreachable on /shows; bare dates only")
-    # Split into upcoming vs past against "today" in the display timezone.
-    # Rows arrive newest-first (query ORDER BY show_date DESC). Past keeps
-    # that order (most-recent past at the top). Upcoming gets reversed to
-    # ascending so the SOONEST future show sits at the top and further-out
-    # shows descend down the list.
-    today = datetime.now(tz=ZoneInfo(cfg.display_tz)).date()
-    upcoming: list[dict[str, Any]] = []
-    past: list[dict[str, Any]] = []
-    for r in rows:
-        iso = r["show_date"].isoformat()
-        entry = {
-            "show_date": r["show_date"],
-            "venue": venue_by_date.get(iso),
-            "entrants": int(r["entrants"]),
-            "resolved": r["resolved_at"] is not None,
-        }
-        (past if r["show_date"] < today else upcoming).append(entry)
-    # DESC append order gives newest-first; reverse upcoming to soonest-first.
-    upcoming.reverse()
+    upcoming, past = build_show_index(rows, announced, venue_by_date, today)
     return render(
         templates,
         request,
