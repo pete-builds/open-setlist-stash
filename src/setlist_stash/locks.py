@@ -38,6 +38,7 @@ from zoneinfo import ZoneInfo
 import asyncpg
 
 from setlist_stash.config import Settings
+from setlist_stash.leaderboard import derive_tour_season_key
 from setlist_stash.mcp_client import McpPhishClient
 
 logger = logging.getLogger("setlist_stash.locks")
@@ -169,19 +170,34 @@ async def get_or_create_lock(
     ``venue_tz``. On conflict we refresh ``lock_at`` from the freshly resolved
     zone *unless* an operator has set ``lock_at_override`` (their value always
     wins), so a location/zone correction propagates to an existing row.
+
+    ``tour_season_key`` is denormalized here from the upstream tour name so the
+    season leaderboard can bucket on the real tour without the resolver calling
+    the MCP on every scoring tick. It is COALESCEd rather than overwritten on
+    conflict: ``select_form_show``'s ``ADMIN_SHOW_DATE`` override constructs a
+    ShowTarget with ``tour_name=None``, and the nightly next-show cron drives
+    exactly that path, so a plain assignment would wipe a good tour key every
+    night. A NULL simply means "no tour info", and rebuild_season falls back to
+    the calendar month for it.
     """
     venue_tz = resolve_venue_tz(show.location, settings.default_lock_tz)
+    tour_season_key = derive_tour_season_key(show.tour_name, show.show_date)
     default_lock = compute_default_lock_at(
         show.show_date, settings, venue_tz=venue_tz
     )
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO prediction_locks (show_date, show_id, lock_at, venue_tz)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO prediction_locks
+                (show_date, show_id, lock_at, venue_tz, tour_season_key)
+            VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (show_date) DO UPDATE
                 SET show_id = COALESCE(prediction_locks.show_id, EXCLUDED.show_id),
                     venue_tz = EXCLUDED.venue_tz,
+                    tour_season_key = COALESCE(
+                        EXCLUDED.tour_season_key,
+                        prediction_locks.tour_season_key
+                    ),
                     lock_at = CASE
                         WHEN prediction_locks.lock_at_override IS NULL
                         THEN EXCLUDED.lock_at
@@ -193,6 +209,7 @@ async def get_or_create_lock(
             show.show_id,
             default_lock,
             venue_tz,
+            tour_season_key,
         )
         if row is None:
             raise RuntimeError("prediction_locks upsert returned no row")

@@ -28,7 +28,7 @@ import json
 import logging
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -43,7 +43,12 @@ from setlist_stash.completeness import (
 )
 from setlist_stash.config import Settings, get_settings
 from setlist_stash.db import close_pool, get_pool, init_pool
-from setlist_stash.leaderboard import parse_runs, rebuild_all, rebuild_leagues
+from setlist_stash.leaderboard import (
+    derive_tour_season_key,
+    parse_runs,
+    rebuild_all,
+    rebuild_leagues,
+)
 from setlist_stash.logging_setup import configure_logging
 from setlist_stash.mcp_client import (
     McpPhishClient,
@@ -700,10 +705,86 @@ async def latest_run_summary(
 # ----- entrypoint -----------------------------------------------------------
 
 
+async def backfill_tour_season_keys(
+    pool: asyncpg.Pool[Any], settings: Settings
+) -> int:
+    """Fill ``prediction_locks.tour_season_key`` for rows that predate it.
+
+    Migration 014 adds the column NULL, and a NULL is indistinguishable from
+    "this show genuinely has no tour" as far as rebuild_season is concerned.
+    So without this, every show locked before the migration keeps its
+    month-derived bucket forever and the fix ships doing nothing visible —
+    which is precisely the failure it was written to correct.
+
+    Returns the number of rows updated. Cheap and self-limiting: it queries the
+    MCP once per distinct year that still has NULL rows, and once every row is
+    filled it costs a single indexed COUNT and exits. Fail-soft by design; a
+    backfill is never worth taking the resolver down for, and the next startup
+    retries whatever it missed.
+
+    Deliberately only writes rows that are NULL. A show whose upstream tour tag
+    later changes is not re-keyed here, because silently rewriting settled
+    leaderboard history on a container restart is worse than a stale bucket.
+    """
+    async with pool.acquire() as conn:
+        pending = await conn.fetch(
+            "SELECT show_date FROM prediction_locks "
+            "WHERE tour_season_key IS NULL ORDER BY show_date"
+        )
+    if not pending:
+        return 0
+    years = sorted({r["show_date"].year for r in pending})
+    tour_by_date: dict[str, str] = {}
+    try:
+        async with McpPhishClient(
+            settings.mcp_phish_url,
+            timeout_seconds=settings.mcp_phish_timeout_seconds,
+        ) as mcp:
+            for yr in years:
+                for row in await mcp.search_shows(year=yr, limit=200):
+                    d = str(row.get("date") or "")
+                    tour = row.get("tour_name")
+                    if d and tour:
+                        tour_by_date[d] = str(tour)
+    except McpPhishError:
+        logger.warning(
+            "tour backfill skipped: mcp unreachable",
+            extra={"pending_rows": len(pending), "years": years},
+        )
+        return 0
+    updates: list[tuple[str, date]] = []
+    for r in pending:
+        show_date = r["show_date"]
+        key = derive_tour_season_key(
+            tour_by_date.get(show_date.isoformat()), show_date
+        )
+        if key is not None:
+            updates.append((key, show_date))
+    if not updates:
+        logger.info(
+            "tour backfill: no upstream tour names for pending shows",
+            extra={"pending_rows": len(pending)},
+        )
+        return 0
+    async with pool.acquire() as conn:
+        await conn.executemany(
+            "UPDATE prediction_locks SET tour_season_key = $1 "
+            "WHERE show_date = $2 AND tour_season_key IS NULL",
+            updates,
+        )
+    logger.info(
+        "tour backfill complete",
+        extra={"rows_updated": len(updates), "pending_rows": len(pending)},
+    )
+    return len(updates)
+
+
 async def _bootstrap(settings: Settings) -> None:
     """Initialize pool + apply migrations. Mirrors the FastAPI lifespan."""
     pool = await init_pool(settings)
     await run_migrations(pool)
+    # After migrations, never before: 014 creates the column this reads.
+    await backfill_tour_season_keys(pool, settings)
 
 
 async def _amain(loop: bool, interval_override: int | None) -> int:
