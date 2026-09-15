@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -365,3 +366,59 @@ def safe_next(raw: str) -> str:
     return s
 
 
+def build_show_index(
+    lock_rows: Iterable[Mapping[str, Any]],
+    announced: Iterable[date],
+    venue_by_date: Mapping[str, str],
+    today: date,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split the show archive into ``(upcoming, past)`` for ``/shows``.
+
+    ``lock_rows`` are the ``prediction_locks`` rows (the shows the game has
+    actually opened). ``announced`` is every upstream-announced date on or
+    after today, which is a SUPERSET of the locked future shows: the game
+    opens one show at a time, so the rest of a tour has no lock row and used
+    to be invisible on the site even though the dates were public.
+
+    Announced dates with no lock row are merged into ``upcoming`` carrying
+    ``scheduled=True``. The template renders those as "Scheduled" with no
+    entrant count, because they are NOT open for picks — flagging them is
+    what keeps "the tour is listed" from reading as "you can pick these now".
+    A date that already has a lock row keeps its real row; the announced list
+    never overwrites one.
+
+    Upcoming is returned soonest-first (the next show is the one people want),
+    past newest-first (the most recent show is the one people want).
+    """
+    locked_dates: set[date] = set()
+    upcoming: list[dict[str, Any]] = []
+    past: list[dict[str, Any]] = []
+    for r in lock_rows:
+        show_date = r["show_date"]
+        locked_dates.add(show_date)
+        entry = {
+            "show_date": show_date,
+            "venue": venue_by_date.get(show_date.isoformat()),
+            "entrants": int(r["entrants"]),
+            "resolved": r["resolved_at"] is not None,
+            "scheduled": False,
+        }
+        (past if show_date < today else upcoming).append(entry)
+    for show_date in set(announced) - locked_dates:
+        if show_date < today:
+            # An announced-but-unopened date in the past never played as far
+            # as this game is concerned. Listing it under "Past shows" with no
+            # players would read as a show everybody skipped.
+            continue
+        upcoming.append(
+            {
+                "show_date": show_date,
+                "venue": venue_by_date.get(show_date.isoformat()),
+                "entrants": 0,
+                "resolved": False,
+                "scheduled": True,
+            }
+        )
+    upcoming.sort(key=lambda e: e["show_date"])
+    past.sort(key=lambda e: e["show_date"], reverse=True)
+    return upcoming, past
