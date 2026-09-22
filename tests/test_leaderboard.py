@@ -23,6 +23,7 @@ from setlist_stash.leaderboard import (
     derive_season_key,
     fetch_leaderboard,
     fetch_user_rank,
+    latest_scope_key,
     list_scope_keys,
     list_show_entrants,
     normalize_scope,
@@ -536,3 +537,73 @@ async def test_list_show_entrants_empty_for_unknown_show(pg_pool: Any) -> None:
     """
     rows = await list_show_entrants(pg_pool, date(2024, 8, 4), limit=50)
     assert rows == []
+
+
+# --- newest-bucket ordering ---------------------------------------------------
+
+
+def test_sort_scope_keys_orders_seasons_by_calendar_not_text() -> None:
+    """``2026-summer`` sorts above ``2026-fall`` as text, so the Season tab
+    opened on the summer board all autumn. Newest first must mean latest in
+    the calendar."""
+    from setlist_stash.leaderboard import sort_scope_keys
+
+    keys = ["2026-summer", "2026-spring", "2026-fall", "2025-winter"]
+    assert sort_scope_keys("tour", keys) == [
+        "2026-fall",
+        "2026-summer",
+        "2026-spring",
+        "2025-winter",
+    ]
+
+
+def test_sort_scope_keys_winter_follows_fall_of_the_same_year() -> None:
+    from setlist_stash.leaderboard import sort_scope_keys
+
+    assert sort_scope_keys("tour", ["2026-fall", "2026-winter", "2027-spring"]) == [
+        "2027-spring",
+        "2026-winter",
+        "2026-fall",
+    ]
+
+
+def test_sort_scope_keys_weekly_and_other_scopes_stay_lexicographic() -> None:
+    from setlist_stash.leaderboard import sort_scope_keys
+
+    assert sort_scope_keys("weekly", ["2026-W18", "2026-W02", "2025-W52"]) == [
+        "2026-W18",
+        "2026-W02",
+        "2025-W52",
+    ]
+    assert sort_scope_keys("run", ["dicks-26", "msg-summer-26"]) == [
+        "msg-summer-26",
+        "dicks-26",
+    ]
+
+
+def test_sort_scope_keys_tolerates_a_malformed_season_key() -> None:
+    from setlist_stash.leaderboard import sort_scope_keys
+
+    out = sort_scope_keys("tour", ["2026-fall", "garbage", "2026-summer"])
+    assert out[0] == "2026-fall"
+    assert set(out) == {"2026-fall", "garbage", "2026-summer"}
+
+
+@requires_pg
+async def test_latest_scope_key_picks_fall_over_summer(pg_pool: Any) -> None:
+    async with pg_pool.acquire() as conn:
+        uid = await conn.fetchval(
+            "INSERT INTO users (handle, handle_lower) VALUES ('seasonal','seasonal') RETURNING id"
+        )
+        for key in ("2026-spring", "2026-summer", "2026-fall", "2025-winter"):
+            await conn.execute(
+                """
+                INSERT INTO leaderboard_snapshots
+                    (scope, scope_key, user_id, handle, total_score, shows_played, rank)
+                VALUES ('tour', $1, $2, 'seasonal', 10, 1, 1)
+                """,
+                key,
+                int(uid),
+            )
+    assert await latest_scope_key(pg_pool, "tour") == "2026-fall"
+    assert (await list_scope_keys(pg_pool, "tour"))[:2] == ["2026-fall", "2026-summer"]

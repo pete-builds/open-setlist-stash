@@ -103,6 +103,78 @@ def derive_season_key(show_date: Any) -> str:
     return f"{year}-{season}"
 
 
+# Upstream strings that occupy the tour field without naming a tour. The
+# Umphrey's MCP returns "No Tour Name" for every single show, and phish.net
+# tags festivals and one-offs "Not Part of a Tour" (70 of 2155 Phish shows as
+# of 2026-09-14). Treating either as a real tour would collapse a whole
+# deployment into one bucket, so they are read as "no information" and fall
+# back to the month.
+_TOUR_PLACEHOLDERS = frozenset(
+    {
+        "",
+        "no tour name",
+        "not part of a tour",
+        "none",
+        "n/a",
+        "unknown",
+    }
+)
+
+_SEASON_WORDS = {
+    "winter": "winter",
+    "spring": "spring",
+    "summer": "summer",
+    "fall": "fall",
+    "autumn": "fall",
+}
+
+
+def derive_tour_season_key(tour_name: Any, show_date: Any) -> str | None:
+    """Season bucket taken from the upstream TOUR NAME, or None.
+
+    Returns a ``YYYY-<season>`` key when ``tour_name`` names both a season and
+    a four-digit year ("2026 Fall Tour", "Winter/Spring Tour 1993"), otherwise
+    None to mean "no usable tour information" — the caller then falls back to
+    :func:`derive_season_key`, which buckets on the calendar month.
+
+    Both parts are REQUIRED on purpose. A name like "1990 Tour" carries a year
+    but no season, and guessing the season from the date would silently label a
+    date-derived bucket as tour-derived; a name with a season but no year would
+    need the show's year, which re-opens the Dec/Jan boundary question that
+    derive_season_key already answers. Demanding both keeps this function
+    total, cheap to reason about, and wrong in only one direction: it declines
+    rather than inventing.
+
+    A multi-season name takes its FIRST season word, so every show on
+    "Winter/Spring Tour 1993" shares one bucket. Keeping a tour together is the
+    entire point of bucketing by tour; splitting it by month is the behavior
+    being replaced.
+
+    The key shape matches :func:`derive_season_key` exactly so the two can
+    COALESCE into one column, and so existing ``LEADERBOARD_TABS`` entries that
+    name a scope_key like ``2026-summer`` keep resolving.
+    """
+    if tour_name is None:
+        return None
+    name = str(tour_name).strip()
+    if name.lower() in _TOUR_PLACEHOLDERS:
+        return None
+    lowered = name.lower()
+    season: str | None = None
+    season_at = len(lowered)
+    for word, canonical in _SEASON_WORDS.items():
+        idx = lowered.find(word)
+        if idx != -1 and idx < season_at:
+            season, season_at = canonical, idx
+    if season is None:
+        return None
+    year_match = re.search(r"(?<!\d)(1[89]\d{2}|20\d{2})(?!\d)", name)
+    if year_match is None:
+        return None
+    _ = show_date  # signature symmetry with derive_season_key; not needed here
+    return f"{year_match.group(1)}-{season}"
+
+
 # ----- rebuilders -----------------------------------------------------------
 
 
@@ -124,16 +196,26 @@ async def rebuild_weekly(pool: asyncpg.Pool[Any]) -> int:
 
 
 async def rebuild_season(pool: asyncpg.Pool[Any]) -> int:
-    """Rebuild the season ('tour') leaderboard via the meteorological-season fallback.
+    """Rebuild the season ('tour') leaderboard from the real tour when known.
 
-    Stored under ``scope='tour'``. When mcp-phish exposes real tour mappings,
-    a follow-on session can swap this for `rebuild_tour` and migrate the
-    scope_keys. The UI continues to render whichever rows exist.
+    Stored under ``scope='tour'``. Each show's bucket is
+    ``prediction_locks.tour_season_key`` — derived from the UPSTREAM tour name
+    by :func:`derive_tour_season_key` when the lock row was written — and falls
+    back to the calendar-month expression below whenever that column is NULL.
+
+    The fallback is load-bearing in two directions, not just for history.
+    Shows whose upstream tour field is a placeholder stay NULL forever, and on
+    the Umphrey's tenant that is EVERY show, so this function must keep
+    producing exactly its old output when no row has a tour key.
+
+    Bucket keys keep the ``YYYY-<season>`` shape rather than becoming raw
+    upstream tour slugs, so a deployment's configured ``LEADERBOARD_TABS``
+    entries (which name scope_keys like ``2026-summer``) keep resolving.
     """
-    # The bucket SQL mirrors derive_season_key:
+    # The fallback SQL mirrors derive_season_key:
     #   Mar-May -> spring, Jun-Aug -> summer, Sep-Nov -> fall,
     #   Dec or Jan/Feb -> winter (Jan/Feb roll back to prior year).
-    bucket_sql = r"""
+    month_sql = r"""
         CASE
             WHEN extract(month FROM p.show_date) BETWEEN 3 AND 5
                 THEN to_char(p.show_date, 'YYYY') || '-spring'
@@ -148,7 +230,14 @@ async def rebuild_season(pool: asyncpg.Pool[Any]) -> int:
                 to_char(p.show_date - INTERVAL '2 months', 'YYYY') || '-winter'
         END
     """
-    return await _rebuild_bucketed(pool, scope="tour", bucket_sql=bucket_sql)
+    return await _rebuild_bucketed(
+        pool,
+        scope="tour",
+        bucket_sql=f"COALESCE(pl.tour_season_key, {month_sql})",
+        extra_join=(
+            "LEFT JOIN prediction_locks pl ON pl.show_date = p.show_date"
+        ),
+    )
 
 
 async def rebuild_all_time(pool: asyncpg.Pool[Any]) -> int:
@@ -400,7 +489,12 @@ async def _rebuild_one_league(
 
 
 async def _rebuild_bucketed(
-    pool: asyncpg.Pool[Any], *, scope: str, bucket_sql: str, extra_where: str = ""
+    pool: asyncpg.Pool[Any],
+    *,
+    scope: str,
+    bucket_sql: str,
+    extra_where: str = "",
+    extra_join: str = "",
 ) -> int:
     """Atomically rebuild one scope.
 
@@ -429,6 +523,7 @@ async def _rebuild_bucketed(
                 MIN(p.submitted_at)         AS first_submitted_at
             FROM predictions p
             JOIN users u ON u.id = p.user_id
+            __EXTRA_JOIN__
             WHERE p.score IS NOT NULL __EXTRA_WHERE__
             GROUP BY 1, p.user_id, u.handle
         ),
@@ -462,8 +557,10 @@ async def _rebuild_bucketed(
             (SELECT COUNT(*) FROM deleted)  AS deleted_count,
             (SELECT COUNT(*) FROM inserted) AS inserted_count
     """
-    sql = sql_template.replace("__BUCKET__", bucket_sql).replace(
-        "__EXTRA_WHERE__", extra_where
+    sql = (
+        sql_template.replace("__BUCKET__", bucket_sql)
+        .replace("__EXTRA_WHERE__", extra_where)
+        .replace("__EXTRA_JOIN__", extra_join)
     )
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(sql, scope)
@@ -479,44 +576,63 @@ async def _rebuild_bucketed(
 # ----- read helpers ---------------------------------------------------------
 
 
+_SEASON_ORDER = {"spring": 1, "summer": 2, "fall": 3, "winter": 4}
+
+
+def _season_sort_key(key: str) -> tuple[int, int, int, str]:
+    """Sort key for a ``YYYY-<season>`` bucket: newest first when reversed.
+
+    Season names do not sort by calendar as text (``summer`` > ``fall`` >
+    ``spring``), so the year and the season's position in it are compared as
+    numbers. A key that is not ``YYYY-<season>`` sorts below every well-formed
+    one so a stray bucket can never be picked as "newest".
+    """
+    year_s, _, season = key.partition("-")
+    rank = _SEASON_ORDER.get(season)
+    if rank is not None and year_s.isdigit():
+        return (1, int(year_s), rank, key)
+    return (0, 0, 0, key)
+
+
+def sort_scope_keys(scope: str, keys: list[str]) -> list[str]:
+    """Order bucket keys newest first for ``scope``.
+
+    Weekly keys (``2026-W18``) are zero-padded and sort correctly as text.
+    Season keys (``2026-fall``) do not: ``2026-summer`` > ``2026-fall`` as
+    text, which opened the Season tab on the summer board all autumn. Run and
+    league keys are operator-chosen slugs with no natural order, so text
+    order is kept for them.
+    """
+    if scope == "tour":
+        return sorted(keys, key=_season_sort_key, reverse=True)
+    return sorted(keys, reverse=True)
+
+
 async def list_scope_keys(
     pool: asyncpg.Pool[Any], scope: str
 ) -> list[str]:
-    """Return the distinct scope_keys for a scope, ordered desc (newest first)."""
+    """Return the distinct scope_keys for a scope, newest first."""
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT DISTINCT scope_key
               FROM leaderboard_snapshots
              WHERE scope = $1
-             ORDER BY scope_key DESC
             """,
             scope,
         )
-    return [str(r["scope_key"]) for r in rows]
+    return sort_scope_keys(scope, [str(r["scope_key"]) for r in rows])
 
 
 async def latest_scope_key(pool: asyncpg.Pool[Any], scope: str) -> str | None:
     """Return the most recent scope_key for a scope, or None if empty.
 
-    "Most recent" is defined as max(scope_key) lexicographically — which is
-    correct for our keys (``2026-W18`` > ``2026-W17``, ``2026-spring`` >
-    ``2025-winter``, ``all`` is the only one for ``all_time``).
+    "Most recent" is the first key of :func:`sort_scope_keys`, which orders
+    season buckets by calendar rather than by string. ``all`` is the only key
+    for ``all_time``.
     """
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT scope_key
-              FROM leaderboard_snapshots
-             WHERE scope = $1
-             ORDER BY scope_key DESC
-             LIMIT 1
-            """,
-            scope,
-        )
-    if row is None:
-        return None
-    return str(row["scope_key"])
+    keys = await list_scope_keys(pool, scope)
+    return keys[0] if keys else None
 
 
 async def fetch_leaderboard(

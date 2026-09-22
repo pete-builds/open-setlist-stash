@@ -532,3 +532,165 @@ async def test_email_send_failure_propagates(
             pg_pool, user=user, email="henry@example.com",
             settings=_settings(), provider=provider,
         )
+
+
+# ---------- token binding and address clobbering ----------
+
+
+def _token_from(provider: CapturingProvider, index: int = -1) -> str:
+    return provider.sent[index].body.split("token=", 1)[1].split()[0]
+
+
+async def _token_rows(pool: asyncpg.Pool[Any], user_id: int) -> list[asyncpg.Record]:
+    async with pool.acquire() as conn:
+        return list(
+            await conn.fetch(
+                """
+                SELECT email, consumed_at FROM auth_tokens
+                 WHERE user_id = $1 AND purpose = 'email_verify'
+                 ORDER BY created_at
+                """,
+                user_id,
+            )
+        )
+
+
+@requires_pg
+async def test_token_row_records_the_address_it_was_minted_for(
+    pg_pool: asyncpg.Pool[Any] | None,
+) -> None:
+    assert pg_pool is not None
+    uid = await _create_user(pg_pool, "alice")
+    provider = CapturingProvider()
+    await request_email_link(
+        pg_pool,
+        user=CurrentUser(id=uid, handle="alice"),
+        email="Alice@Example.com",
+        settings=_settings(),
+        provider=provider,
+    )
+    rows = await _token_rows(pg_pool, uid)
+    assert [r["email"] for r in rows] == ["alice@example.com"]
+
+
+@requires_pg
+async def test_old_link_cannot_verify_a_different_address(
+    pg_pool: asyncpg.Pool[Any] | None,
+) -> None:
+    """The takeover: request a link for your own inbox, switch the row to a
+    victim's address, click the first link. The first link must be dead, and
+    the victim's address must NOT come out verified on the attacker's row."""
+    assert pg_pool is not None
+    attacker = await _create_user(pg_pool, "mallory")
+    user = CurrentUser(id=attacker, handle="mallory")
+    provider = CapturingProvider()
+    settings = _settings()
+
+    await request_email_link(
+        pg_pool, user=user, email="mallory@example.com", settings=settings, provider=provider
+    )
+    first_link = _token_from(provider, 0)
+
+    await request_email_link(
+        pg_pool, user=user, email="victim@example.com", settings=settings, provider=provider
+    )
+
+    with pytest.raises(LookupError):
+        await verify_token(pg_pool, token=first_link)
+
+    async with pg_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT email, email_verified_at FROM users WHERE id = $1", attacker
+        )
+    assert row is not None
+    assert row["email"] == "victim@example.com"
+    assert row["email_verified_at"] is None
+    # The stale token was retired the moment the address changed, not merely
+    # refused at click time.
+    rows = await _token_rows(pg_pool, attacker)
+    assert rows[0]["email"] == "mallory@example.com"
+    assert rows[0]["consumed_at"] is not None
+
+
+@requires_pg
+async def test_current_link_still_verifies_the_current_address(
+    pg_pool: asyncpg.Pool[Any] | None,
+) -> None:
+    """Control for the test above: the legitimate path is unchanged."""
+    assert pg_pool is not None
+    uid = await _create_user(pg_pool, "alice")
+    provider = CapturingProvider()
+    await request_email_link(
+        pg_pool,
+        user=CurrentUser(id=uid, handle="alice"),
+        email="alice@example.com",
+        settings=_settings(),
+        provider=provider,
+    )
+    result = await verify_token(pg_pool, token=_token_from(provider))
+    assert result.user_id == uid
+    async with pg_pool.acquire() as conn:
+        verified_at = await conn.fetchval(
+            "SELECT email_verified_at FROM users WHERE id = $1", uid
+        )
+    assert verified_at is not None
+
+
+@requires_pg
+async def test_attaching_an_address_an_unverified_account_holds_does_not_500(
+    pg_pool: asyncpg.Pool[Any] | None,
+) -> None:
+    """Migration 003's unique index covers unverified rows too, so the plain
+    UPDATE raised ``UniqueViolationError`` and the player saw a 500. Worse,
+    typing someone else's address once parked it against them for good. The
+    documented intent (an unverified holder may be clobbered; the rightful
+    owner has their inbox) is now what actually happens."""
+    assert pg_pool is not None
+    bob = await _create_user(pg_pool, "bob", email="shared@example.com", verified=False)
+    bob_provider = CapturingProvider()
+    await request_email_link(
+        pg_pool,
+        user=CurrentUser(id=bob, handle="bob"),
+        email="shared@example.com",
+        settings=_settings(),
+        provider=bob_provider,
+    )
+    bob_token = _token_from(bob_provider)
+
+    alice = await _create_user(pg_pool, "alice")
+    provider = CapturingProvider()
+    masked = await request_email_link(
+        pg_pool,
+        user=CurrentUser(id=alice, handle="alice"),
+        email="SHARED@example.com",
+        settings=_settings(),
+        provider=provider,
+    )
+    assert masked == "s***@example.com"
+    async with pg_pool.acquire() as conn:
+        alice_email = await conn.fetchval("SELECT email FROM users WHERE id = $1", alice)
+        bob_email = await conn.fetchval("SELECT email FROM users WHERE id = $1", bob)
+    assert alice_email == "shared@example.com"
+    assert bob_email is None
+    # Bob's outstanding link for that address is dead: it must not verify the
+    # address onto a row that no longer holds it.
+    with pytest.raises(LookupError):
+        await verify_token(pg_pool, token=bob_token)
+
+
+@requires_pg
+async def test_verified_holder_still_blocks_the_address(
+    pg_pool: asyncpg.Pool[Any] | None,
+) -> None:
+    """Control: a VERIFIED holder is never clobbered."""
+    assert pg_pool is not None
+    await _create_user(pg_pool, "alice", email="shared@example.com", verified=True)
+    bob = await _create_user(pg_pool, "bob")
+    with pytest.raises(EmailTakenError):
+        await request_email_link(
+            pg_pool,
+            user=CurrentUser(id=bob, handle="bob"),
+            email="shared@example.com",
+            settings=_settings(),
+            provider=CapturingProvider(),
+        )

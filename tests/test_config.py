@@ -88,3 +88,73 @@ class TestSiteDescription:
         assert effective
         assert "Phish" not in effective
         assert "Umphrey" not in effective
+
+
+# --- pg_dsn: the password must survive URL parsing -----------------------------
+
+
+class TestPgDsnEncoding:
+    """A strong generated password contains URL punctuation. Interpolated raw,
+    asyncpg parses ``@`` as the host separator and ``#`` as a fragment, so the
+    pool silently points at the wrong host or crashes on the port."""
+
+    def _settings(self, password: str) -> Settings:
+        from pydantic import SecretStr
+
+        return Settings(  # type: ignore[call-arg]
+            session_secret=SecretStr("test-secret"),
+            pg_user="u",
+            pg_password=SecretStr(password),
+            pg_host="dbhost",
+            pg_port=5432,
+            pg_db="d",
+        )
+
+    def test_plain_password_round_trips(self) -> None:
+        from urllib.parse import unquote, urlsplit
+
+        parts = urlsplit(self._settings("plain").pg_dsn)
+        assert parts.hostname == "dbhost"
+        assert parts.port == 5432
+        assert parts.path == "/d"
+        assert unquote(parts.password or "") == "plain"
+
+    def test_url_punctuation_in_password_round_trips(self) -> None:
+        from urllib.parse import unquote, urlsplit
+
+        for pw in ("p@ss/w:rd#1", "abc#123", "50%off", "q?a=b&c", "tr@il/"):
+            parts = urlsplit(self._settings(pw).pg_dsn)
+            assert parts.hostname == "dbhost", pw
+            assert parts.port == 5432, pw
+            assert parts.path == "/d", pw
+            assert parts.username == "u", pw
+            assert unquote(parts.password or "") == pw, pw
+
+    def test_asyncpg_parses_the_dsn_to_the_right_place(self) -> None:
+        """Belt and braces: hand the DSN to asyncpg's own parser."""
+        import pytest
+        from asyncpg.connect_utils import _parse_connect_dsn_and_args
+
+        pw = "p@ss/w:rd#1"
+        try:
+            addrs, params = _parse_connect_dsn_and_args(
+                dsn=self._settings(pw).pg_dsn,
+                host=None,
+                port=None,
+                user=None,
+                password=None,
+                passfile=None,
+                database=None,
+                ssl=None,
+                direct_tls=None,
+                server_settings=None,
+                target_session_attrs=None,
+                krbsrvname=None,
+                gsslib=None,
+            )
+        except TypeError:
+            pytest.skip("asyncpg private parser signature changed")
+        assert addrs == [("dbhost", 5432)]
+        assert params.user == "u"
+        assert params.database == "d"
+        assert params.password == pw

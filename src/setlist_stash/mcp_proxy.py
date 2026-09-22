@@ -69,6 +69,13 @@ _HOP_BY_HOP = frozenset(
     }
 )
 
+# Credentials that belong to THIS origin and must never reach the upstream.
+# The proxy is same-origin for the browser, so every request carries the
+# signed session cookies; the upstream MCP is a different trust domain (and
+# authless), and its access logs must not hold live session tokens. A bearer
+# token a client sends is likewise meant for this server, not the upstream.
+_NEVER_FORWARD = frozenset({"cookie", "authorization"})
+
 
 class FixedWindowRateLimiter:
     """In-memory fixed-window per-key rate limiter. Dependency-free.
@@ -165,7 +172,8 @@ class FixedWindowRateLimiter:
 def _forward_request_headers(request: Request) -> dict[str, str]:
     headers: dict[str, str] = {}
     for name, value in request.headers.items():
-        if name.lower() in _HOP_BY_HOP:
+        lowered = name.lower()
+        if lowered in _HOP_BY_HOP or lowered in _NEVER_FORWARD:
             continue
         headers[name] = value
     return headers

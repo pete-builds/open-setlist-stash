@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import httpx
 from httpx import ASGITransport, AsyncClient, MockTransport
+from starlette.requests import Request
 
 from setlist_stash.client_addr import resolve_client_ip
 from setlist_stash.config import Settings
@@ -344,3 +345,44 @@ def test_rate_limiter_sweep_does_not_change_the_verdict() -> None:
     assert not limiter.allow("returning", now=1010.0)
     # Long enough away to be swept, and long enough to be allowed again.
     assert limiter.allow("returning", now=1500.0)
+
+
+# --- request header forwarding -------------------------------------------------
+
+
+def _request_with_headers(headers: dict[str, str]) -> Request:
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/mcp",
+        "query_string": b"",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+    }
+    return Request(scope)
+
+
+def test_forward_request_headers_drops_browser_credentials() -> None:
+    """The proxy is reachable from a browser on the same origin, so every
+    request carries the signed session cookies. The upstream MCP is a
+    different trust domain (and authless), so neither the cookies nor a bearer
+    token may cross. Only the MCP framing headers do."""
+    from setlist_stash.mcp_proxy import _forward_request_headers
+
+    forwarded = _forward_request_headers(
+        _request_with_headers(
+            {
+                "cookie": "phishgame_session=SIGNED; phishgame_oauth=X",
+                "authorization": "Bearer client-token",
+                "mcp-session-id": "abc",
+                "content-type": "application/json",
+                "accept": "application/json, text/event-stream",
+                "host": "tweezerpicks.com",
+            }
+        )
+    )
+    lowered = {k.lower(): v for k, v in forwarded.items()}
+    assert "cookie" not in lowered
+    assert "authorization" not in lowered
+    assert "host" not in lowered
+    assert lowered["mcp-session-id"] == "abc"
+    assert lowered["content-type"] == "application/json"
