@@ -24,6 +24,7 @@ is the intended use case for Phase 4b.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from email.message import EmailMessage
 from typing import Protocol
 
@@ -46,11 +47,26 @@ class EmailProvider(Protocol):
     ``send`` is async to keep the door open for SMTP / HTTP transports that
     don't want to block the event loop. For the in-process LogProvider it's
     a no-op coroutine.
+
+    ``headers`` carries extra RFC 5322 headers for transports that can set
+    them. It exists for ``List-Unsubscribe`` / ``List-Unsubscribe-Post`` on
+    bulk reminder mail: without those, Gmail and Apple Mail show no
+    unsubscribe affordance of their own and an unwilling recipient's only
+    button is "report spam", which damages the sending domain and takes
+    transactional sign-in mail down with it. Optional and defaulted so every
+    existing caller and test double keeps working unchanged.
     """
 
     name: str
 
-    async def send(self, *, to: str, subject: str, body: str) -> None: ...
+    async def send(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> None: ...
 
 
 class DisabledProvider:
@@ -62,7 +78,15 @@ class DisabledProvider:
 
     name = "disabled"
 
-    async def send(self, *, to: str, subject: str, body: str) -> None:
+    async def send(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
+        _ = headers  # nothing is sent; nothing to attach them to
         logger.info(
             "email send blocked (provider=disabled)",
             extra={"to": to, "subject": subject},
@@ -86,13 +110,22 @@ class LogProvider:
 
     name = "log"
 
-    async def send(self, *, to: str, subject: str, body: str) -> None:
+    async def send(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
         # Single-line preamble + indented body; easy to spot in container logs.
         logger.info(
             "EMAIL (log provider) -> %s | subject: %s",
             to,
             subject,
         )
+        for key, value in (headers or {}).items():
+            logger.info("EMAIL header | %s: %s", key, value)
         for line in body.splitlines():
             logger.info("EMAIL body | %s", line)
 
@@ -134,15 +167,38 @@ class SmtpProvider:
         self.starttls = starttls
         self.timeout_seconds = timeout_seconds
 
-    def _build_message(self, *, to: str, subject: str, body: str) -> EmailMessage:
+    def _build_message(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> EmailMessage:
         msg = EmailMessage()
         msg["From"] = self.sender
         msg["To"] = to
         msg["Subject"] = subject
+        # Extra headers are set BEFORE the body so a duplicate key raises here
+        # rather than producing a message with two of them. EmailMessage
+        # appends on repeat assignment instead of replacing, and a doubled
+        # List-Unsubscribe is treated as malformed by some clients, which
+        # silently removes the unsubscribe button we added it for.
+        for key, value in (headers or {}).items():
+            if key in msg:
+                del msg[key]
+            msg[key] = value
         msg.set_content(body)
         return msg
 
-    async def send(self, *, to: str, subject: str, body: str) -> None:
+    async def send(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
         # Imported lazily so Disabled/Log providers don't pay the import cost
         # in environments where aiosmtplib isn't installed (e.g. minimal CI
         # paths). aiosmtplib IS in requirements.lock, so this always works
@@ -154,7 +210,9 @@ class SmtpProvider:
                 "aiosmtplib is not installed; cannot send via SMTP"
             ) from exc
 
-        msg = self._build_message(to=to, subject=subject, body=body)
+        msg = self._build_message(
+            to=to, subject=subject, body=body, headers=headers
+        )
         try:
             await aiosmtplib.send(
                 msg,

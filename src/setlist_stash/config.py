@@ -391,6 +391,30 @@ class Settings(BaseSettings):
     smtp_pass: SecretStr = Field(default=SecretStr(""))
     smtp_from: str = Field(default="")
 
+    # --- Show-day pick reminders ---
+    # Off by default, and deliberately a separate switch from EMAIL_PROVIDER.
+    # Configuring SMTP so people can receive a sign-in link must not, on its
+    # own, sign the whole player base up for bulk mail: the OSS image and any
+    # third-party self-host get transactional mail only until an operator
+    # opts in here. Flipping this needs a recreate of the reminder service,
+    # not an image rebuild.
+    reminder_enabled: bool = Field(default=False)
+    # Local wall-clock time the daily check runs, in DISPLAY_TZ (Eastern by
+    # default), NOT in the container's zone. Containers run TZ=UTC and 09:00
+    # UTC is 5am Eastern, which is not a reminder, it is an alarm clock.
+    reminder_hour_local: int = Field(default=9, ge=0, le=23)
+    reminder_minute_local: int = Field(default=0, ge=0, le=59)
+    # Grace period after the target time in which a late tick still counts as
+    # "today's run". A container that restarts at 09:04 should still send;
+    # one that comes up at 3pm should not mail people four hours late about a
+    # show that may already have locked. The dedupe row, not this window, is
+    # what prevents a double send.
+    reminder_catchup_minutes: int = Field(default=120, ge=0, le=1440)
+    # Minimum minutes that must remain before the show's pick cutoff for a
+    # reminder to be worth sending. A message that lands after the lock is
+    # actively annoying: it asks for something the recipient can no longer do.
+    reminder_min_lead_minutes: int = Field(default=30, ge=0, le=1440)
+
     # --- Smart-pick assist gate ---
     # MUST stay False during the prediction window. See docs/PHASE-4-PLAN.md.
     assist_pre_lock: bool = Field(default=False)
