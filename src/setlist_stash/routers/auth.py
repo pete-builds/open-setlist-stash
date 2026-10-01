@@ -49,6 +49,7 @@ from setlist_stash.deps import (
 )
 from setlist_stash.email import EmailProvider, EmailSendError
 from setlist_stash.leagues import list_user_leagues
+from setlist_stash.unsubscribe import is_opted_out
 from setlist_stash.web_helpers import safe_next
 
 router = APIRouter()
@@ -550,6 +551,10 @@ async def account_page(
         google_linked=google_sub is not None,
         flash=flash,
         leagues=memberships,
+        # Checkbox state. Opt-OUT is what's stored, so the box is checked when
+        # nothing has been stored: a player who never touched this is
+        # subscribed, which is what the email they get says.
+        reminders_on=not await is_opted_out(pool, user.id),
     )
     if flash:
         resp.delete_cookie("phishgame_flash")

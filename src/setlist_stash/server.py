@@ -47,6 +47,9 @@ from setlist_stash.routers import (
     comments as comments_router,
 )
 from setlist_stash.routers import (
+    email_prefs as email_prefs_router,
+)
+from setlist_stash.routers import (
     leagues as leagues_router,
 )
 from setlist_stash.routers import (
@@ -193,6 +196,10 @@ def build_app(
     app.include_router(comments_router.router)      # /show/*/comments, /comment/*
     app.include_router(leagues_router.router)       # /leagues, /league/*, /game/*
     app.include_router(blog_router.router)          # /blog, /blog/*
+    # /email/unsubscribe, /account/email-prefs. Included unconditionally: a
+    # deployment that later turns email off still has live unsubscribe links
+    # sitting in inboxes, and those must not start 404ing.
+    app.include_router(email_prefs_router.router)
 
     logger.info(
         "setlist-stash booted",

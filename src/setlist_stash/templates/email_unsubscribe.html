@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Unsubscribe — {{ site_name }}{% endblock %}
+{% block content %}
+  <h1>Turn off show-day reminders</h1>
+  <div class="card">
+    {% if error %}
+      <p><strong>{{ error }}</strong></p>
+    {% endif %}
+    {% if token_valid %}
+      <p>
+        This will stop show-day pick reminders for
+        <strong>{{ handle }}</strong>.
+      </p>
+      <p class="muted">
+        You'll still get sign-in links when you ask for one, and you can turn
+        reminders back on any time from your account page.
+      </p>
+      {# The button, not the page load, is what unsubscribes. Mail scanners
+         fetch every link in a message on arrival; if GET acted, they would
+         unsubscribe people who never clicked anything. #}
+      <form method="post" action="/email/unsubscribe">
+        <input type="hidden" name="token" value="{{ token }}">
+        <button class="btn" type="submit">Unsubscribe me</button>
+      </form>
+    {% else %}
+      <p>We couldn't read that unsubscribe link.</p>
+      <p class="muted">
+        It may have been broken across two lines by your email program, or it
+        may be from an older version of the site. You can turn reminders off
+        directly: sign in and use the reminder setting on
+        <a href="/account">your account page</a>.
+      </p>
+    {% endif %}
+  </div>
+{% endblock %}
