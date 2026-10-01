@@ -252,7 +252,11 @@ def _list_unsubscribe_headers(settings: Settings, user_id: int) -> dict[str, str
 
 
 async def _effective_lock(
-    pool: asyncpg.Pool[Any], show: ShowTarget, settings: Settings
+    pool: asyncpg.Pool[Any],
+    show: ShowTarget,
+    settings: Settings,
+    *,
+    now: datetime,
 ) -> tuple[datetime, bool]:
     """The pick cutoff for ``show`` and whether it has passed.
 
@@ -262,13 +266,16 @@ async def _effective_lock(
     lock row: that row is meant to appear on the first prediction, and a job
     that quietly materializes it changes what ``read_lock``-based views show
     for a show nobody has played yet.
+
+    ``now`` is the tick's clock and is required, not defaulted. Both branches
+    judge "closed" against it, so the lock verdict and the lead-time check
+    that follows it can never be computed from two different clocks.
     """
-    existing: LockState | None = await read_lock(pool, show.show_date)
+    existing: LockState | None = await read_lock(pool, show.show_date, now=now)
     if existing is not None:
         return existing.lock_at, existing.is_locked
     venue_tz = resolve_venue_tz(show.location, settings.default_lock_tz)
     lock_at = compute_default_lock_at(show.show_date, settings, venue_tz=venue_tz)
-    now = datetime.now(tz=ZoneInfo("UTC"))
     return lock_at, now > lock_at
 
 
@@ -285,6 +292,11 @@ async def run_tick(
     be tested against a fixed clock and a recording transport. In the container
     all three come from the process: the global pool, the configured provider,
     and the real clock.
+
+    The clock is read exactly once, here. Show selection, the lock verdict and
+    the lead-time check all take ``now_local``; none of them may consult the
+    wall clock or the database's ``now()`` on their own.
+    ``test_tick_reads_only_the_injected_clock`` enforces that.
     """
     if not settings.reminder_enabled:
         return TickResult("disabled", note="REMINDER_ENABLED is false")
@@ -298,7 +310,7 @@ async def run_tick(
             settings.mcp_phish_url,
             timeout_seconds=settings.mcp_phish_timeout_seconds,
         ) as mcp:
-            show = await select_form_show(settings, mcp)
+            show = await select_form_show(settings, mcp, today=today)
     except Exception as exc:
         logger.exception("show lookup failed")
         return TickResult("error", note=f"show lookup failed: {exc!s}"[:200])
@@ -313,7 +325,7 @@ async def run_tick(
         )
 
     db = pool if pool is not None else get_pool()
-    lock_at, is_locked = await _effective_lock(db, show, settings)
+    lock_at, is_locked = await _effective_lock(db, show, settings, now=now_local)
     if is_locked:
         return TickResult(
             "noop", show_date=show.show_date, note="picks already closed"

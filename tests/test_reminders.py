@@ -25,7 +25,7 @@ import pytest
 from pydantic import SecretStr
 
 from setlist_stash.config import Settings
-from setlist_stash.locks import ShowTarget
+from setlist_stash.locks import ShowTarget, read_lock
 from setlist_stash.reminders import (
     KIND,
     Recipient,
@@ -250,6 +250,13 @@ async def test_select_recipients_excludes_the_four_wrong_audiences(
     """One eligible player among four who must not be mailed."""
     assert pg_pool is not None
     show_date = date(2026, 9, 5)
+    # This lock is relative to the REAL clock on purpose, and is the one
+    # place in the file that should be. ``predictions`` has a foreign key to
+    # ``prediction_locks`` and a trigger that refuses an INSERT after the
+    # cutoff, judged by the database's own ``now()`` at write time. The
+    # "alreadypicked" fixture below has to get past that trigger today, not
+    # on 2026-09-05. Recipient selection itself never reads the lock, so no
+    # assertion here depends on what day the suite runs.
     await _make_lock(
         pg_pool, show_date, datetime.now(tz=UTC) + timedelta(hours=8)
     )
@@ -416,3 +423,95 @@ async def test_one_failed_send_does_not_silence_the_batch(
             "SELECT status FROM email_sends ORDER BY user_id"
         )
     assert [r["status"] for r in rows] == ["failed", "sent"]
+
+
+# ----- one clock ------------------------------------------------------------
+#
+# The tick takes an injectable ``now``. Every decision it makes (which show is
+# today's, whether picks have closed, how much lead time is left) has to come
+# from that one value. A single stray read of the real clock, in Python or in
+# Postgres (``SELECT now()``), turns a fixed-date test into a time bomb that
+# passes the day it is written and fails once real time walks past the
+# fixture. This PR shipped exactly that bug: the lock check read the database
+# clock, and the 2026-09-05 fixtures went red once that evening's cutoff
+# passed in real time.
+#
+# The guard runs the same scenarios decades in the past AND decades in the
+# future. Whatever today's real date is, it sits on the wrong side of one of
+# those runs, so any remaining real-clock read flips a verdict and fails here
+# loudly instead of rotting quietly.
+
+
+@requires_pg
+@pytest.mark.asyncio
+@pytest.mark.parametrize("year", [2001, 2099])
+@pytest.mark.parametrize("lock_source", ["row", "default"])
+@pytest.mark.parametrize("state", ["open", "closed"])
+async def test_tick_reads_only_the_injected_clock(
+    pg_pool: asyncpg.Pool[Any] | None,
+    year: int,
+    lock_source: str,
+    state: str,
+) -> None:
+    assert pg_pool is not None
+    show_date = date(year, 7, 1)
+    now = datetime(year, 7, 1, 9, 0, tzinfo=ET)
+    # "closed" puts the cutoff at 08:00 ET, an hour before the 9am tick;
+    # "open" puts it at 19:25 ET, comfortably past the minimum lead.
+    lock_local = "08:00" if state == "closed" else "19:25"
+    cfg = _settings(
+        default_lock_time_local=lock_local,
+        default_lock_tz="America/New_York",
+        # Pinning the show through the operator override runs the real
+        # select_form_show, whose own notion of "today" must also be ``now``.
+        admin_show_date=show_date,
+    )
+    if lock_source == "row":
+        hh, mm = (int(p) for p in lock_local.split(":"))
+        await _make_lock(
+            pg_pool, show_date, datetime(year, 7, 1, hh, mm, tzinfo=ET)
+        )
+    await _make_user(pg_pool, "timetraveler")
+    provider = CapturingProvider()
+
+    # The override must be honored without an MCP lookup. If the tick judged
+    # the pinned date against the real calendar it would fall through to the
+    # network, so make that path fail fast and visibly.
+    async def _no_mcp(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("tick fell through to an MCP show lookup")
+
+    with patch("setlist_stash.locks._shows_on_or_after", new=_no_mcp):
+        result = await run_tick(cfg, pool=pg_pool, provider=provider, now=now)
+
+    assert result.show_date == show_date, result
+    if state == "open":
+        assert result.status == "sent", result
+        assert [m["to"] for m in provider.sent] == ["timetraveler@example.test"]
+    else:
+        assert result.status == "noop", result
+        assert result.note == "picks already closed", result
+        assert provider.sent == []
+
+
+@requires_pg
+@pytest.mark.asyncio
+async def test_read_lock_keeps_the_database_clock_unless_told_otherwise(
+    pg_pool: asyncpg.Pool[Any] | None,
+) -> None:
+    """``now=`` is opt-in. The request handlers that call ``read_lock`` without
+    it must keep judging against the database clock exactly as before."""
+    assert pg_pool is not None
+    show_date = date(2001, 7, 1)
+    cutoff = datetime(2001, 7, 1, 23, 25, tzinfo=UTC)
+    await _make_lock(pg_pool, show_date, cutoff)
+
+    real = await read_lock(pg_pool, show_date)
+    assert real is not None and real.is_locked  # 2001 is long gone
+
+    before = await read_lock(
+        pg_pool, show_date, now=cutoff - timedelta(minutes=1)
+    )
+    assert before is not None
+    assert not before.is_locked
+    assert before.seconds_until_lock == 60
+    assert before.lock_at == cutoff

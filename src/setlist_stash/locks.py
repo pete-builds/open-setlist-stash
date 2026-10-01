@@ -230,12 +230,16 @@ async def get_or_create_lock(
 
 
 async def read_lock(
-    pool: asyncpg.Pool[Any], show_date: date
+    pool: asyncpg.Pool[Any], show_date: date, *, now: datetime | None = None
 ) -> LockState | None:
     """Read an existing prediction_locks row without creating one.
 
     Returns None if no row exists. Used by post-lock views that should NOT
     lazily create a lock for a date that's never been predicted-on.
+
+    ``is_locked`` is judged against the database clock unless the caller
+    passes ``now`` (timezone-aware). A job that runs on an injected clock must
+    pass it, or its own idea of "now" and this function's will disagree.
     """
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -248,7 +252,8 @@ async def read_lock(
         )
         if row is None:
             return None
-        now = await conn.fetchval("SELECT now() AT TIME ZONE 'UTC'")
+        if now is None:
+            now = await conn.fetchval("SELECT now() AT TIME ZONE 'UTC'")
     effective = row["lock_at_override"] or row["lock_at"]
     if not isinstance(now, datetime):
         raise RuntimeError("could not read DB now()")
@@ -287,7 +292,7 @@ async def assist_allowed(
 
 
 async def select_form_show(
-    settings: Settings, mcp: McpPhishClient
+    settings: Settings, mcp: McpPhishClient, *, today: date | None = None
 ) -> ShowTarget | None:
     """Pick the show that the predict form should target.
 
@@ -310,8 +315,13 @@ async def select_form_show(
     keeps tonight's show as "the show" for the whole evening, which is what the
     live home-page card is built on. Callers that need the next *pickable* show
     once tonight's is over use :func:`select_next_show`.
+
+    ``today`` lets a caller that runs on an injected clock (the reminder tick)
+    evaluate the override and the search against that clock instead of the
+    real one. Request handlers leave it unset and get the real DISPLAY_TZ date.
     """
-    today = datetime.now(tz=ZoneInfo(settings.display_tz)).date()
+    if today is None:
+        today = datetime.now(tz=ZoneInfo(settings.display_tz)).date()
 
     # Operator override: only while the pinned date is still upcoming.
     if settings.admin_show_date and settings.admin_show_date >= today:
