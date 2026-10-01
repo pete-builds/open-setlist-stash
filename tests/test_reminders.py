@@ -29,9 +29,11 @@ from setlist_stash.locks import ShowTarget, read_lock
 from setlist_stash.reminders import (
     KIND,
     Recipient,
+    TickResult,
     claim_send,
     next_run_at,
     render_message,
+    run_schedule,
     run_tick,
     select_recipients,
     within_catchup_window,
@@ -515,3 +517,133 @@ async def test_read_lock_keeps_the_database_clock_unless_told_otherwise(
     assert not before.is_locked
     assert before.seconds_until_lock == 60
     assert before.lock_at == cutoff
+
+
+# ----- the daily loop -------------------------------------------------------
+#
+# ``run_schedule`` is driven here on a fake clock: ``sleep`` advances the clock
+# instead of waiting, so days of wall time run in milliseconds. The bug these
+# pin was a loop that recomputed "the next target" on every wake. The wake
+# that ended the last sleep landed at or just past 09:00, where the next
+# target is already TOMORROW, so it slept again and the scheduled tick never
+# ran. Only a restart inside the catch-up window ever sent anything.
+
+
+class _StopLoop(Exception):
+    """Raised by the fake sleep to end an otherwise endless loop."""
+
+
+class _FakeClock:
+    def __init__(
+        self,
+        start: datetime,
+        stop_at: datetime,
+        *,
+        jump_on_first_sleep: timedelta = timedelta(0),
+    ) -> None:
+        self.t = start.astimezone(UTC)
+        self.stop_at = stop_at.astimezone(UTC)
+        self.jump = jump_on_first_sleep
+        self.sleeps = 0
+
+    def now(self) -> datetime:
+        return self.t
+
+    async def sleep(self, seconds: float) -> None:
+        assert seconds > 0, f"non-positive sleep {seconds} would spin"
+        self.sleeps += 1
+        # A loop that never reaches stop_at would hang the suite instead of
+        # failing it; 100k sleeps is decades of 15-minute naps.
+        if self.sleeps > 100_000:
+            raise _StopLoop("runaway loop")
+        self.t += timedelta(seconds=seconds)
+        if self.sleeps == 1:
+            self.t += self.jump  # a host suspend or clock step mid-sleep
+        if self.t >= self.stop_at:
+            raise _StopLoop
+
+
+async def _drive(
+    clock: _FakeClock, *, cfg: Settings | None = None, fail_first: bool = False
+) -> list[datetime]:
+    fired: list[datetime] = []
+
+    async def _tick() -> TickResult:
+        fired.append(clock.now().astimezone(ET))
+        if fail_first and len(fired) == 1:
+            raise RuntimeError("tick blew up")
+        return TickResult("noop")
+
+    with pytest.raises(_StopLoop):
+        await run_schedule(
+            cfg or _settings(), tick=_tick, clock=clock.now, sleep=clock.sleep
+        )
+    return fired
+
+
+def _when(fired: list[datetime]) -> list[tuple[date, int, int]]:
+    return [(t.date(), t.hour, t.minute) for t in fired]
+
+
+@pytest.mark.asyncio
+async def test_loop_fires_once_a_day_at_the_target() -> None:
+    clock = _FakeClock(
+        datetime(2026, 9, 4, 20, 0, tzinfo=ET),
+        datetime(2026, 9, 7, 12, 0, tzinfo=ET),
+    )
+    assert _when(await _drive(clock)) == [
+        (date(2026, 9, 5), 9, 0),
+        (date(2026, 9, 6), 9, 0),
+        (date(2026, 9, 7), 9, 0),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_loop_holds_9am_local_across_the_fall_back() -> None:
+    """2026-11-01 is the US fall-back Sunday; both runs land at 09:00 local."""
+    clock = _FakeClock(
+        datetime(2026, 10, 31, 20, 0, tzinfo=ET),
+        datetime(2026, 11, 2, 12, 0, tzinfo=ET),
+    )
+    assert _when(await _drive(clock)) == [
+        (date(2026, 11, 1), 9, 0),
+        (date(2026, 11, 2), 9, 0),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_loop_restart_inside_the_window_runs_once_not_twice() -> None:
+    """Startup at 09:30 runs today's pass now, then waits for TOMORROW."""
+    clock = _FakeClock(
+        datetime(2026, 9, 5, 9, 30, tzinfo=ET),
+        datetime(2026, 9, 6, 12, 0, tzinfo=ET),
+    )
+    assert _when(await _drive(clock)) == [
+        (date(2026, 9, 5), 9, 30),
+        (date(2026, 9, 6), 9, 0),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_loop_skips_a_run_it_wakes_up_too_late_for() -> None:
+    """A suspend that carries the host past the catch-up window skips that
+    day rather than mailing people at 2pm, and the next day still fires."""
+    clock = _FakeClock(
+        datetime(2026, 9, 5, 8, 0, tzinfo=ET),
+        datetime(2026, 9, 6, 12, 0, tzinfo=ET),
+        jump_on_first_sleep=timedelta(hours=6),
+    )
+    cfg = _settings(reminder_catchup_minutes=120)
+    assert _when(await _drive(clock, cfg=cfg)) == [(date(2026, 9, 6), 9, 0)]
+
+
+@pytest.mark.asyncio
+async def test_loop_survives_a_tick_that_raises() -> None:
+    clock = _FakeClock(
+        datetime(2026, 9, 4, 20, 0, tzinfo=ET),
+        datetime(2026, 9, 6, 12, 0, tzinfo=ET),
+    )
+    assert _when(await _drive(clock, fail_first=True)) == [
+        (date(2026, 9, 5), 9, 0),
+        (date(2026, 9, 6), 9, 0),
+    ]

@@ -31,6 +31,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -58,7 +59,7 @@ from setlist_stash.web_helpers import display_dt
 
 logger = logging.getLogger("setlist_stash.reminders")
 
-__all__ = ["KIND", "Recipient", "TickResult", "main", "run_tick"]
+__all__ = ["KIND", "Recipient", "TickResult", "main", "run_schedule", "run_tick"]
 
 # Message family, and the dedupe namespace that goes with it. A future digest
 # gets its own KIND and cannot collide with this one.
@@ -449,6 +450,85 @@ def _log_tick(result: TickResult) -> None:
     )
 
 
+Clock = Callable[[], datetime]
+Sleep = Callable[[float], Awaitable[None]]
+Tick = Callable[[], Awaitable[TickResult]]
+
+
+async def _safe_tick(tick: Tick, what: str) -> None:
+    try:
+        _log_tick(await tick())
+    except Exception:
+        # Never let a bad tick end the loop; tomorrow deserves a try.
+        logger.exception("%s raised; continuing loop", what)
+
+
+async def run_schedule(
+    settings: Settings,
+    *,
+    tick: Tick,
+    clock: Clock | None = None,
+    sleep: Sleep = asyncio.sleep,
+) -> None:
+    """Run ``tick`` once a day at REMINDER_HOUR_LOCAL:MINUTE_LOCAL. Forever.
+
+    The loop remembers the target it is waiting for. It computes ``due`` once,
+    sleeps toward it in chunks of at most ``_MAX_SLEEP_SECONDS`` (re-reading
+    the clock against that SAME ``due`` on every wake), runs the tick when it
+    arrives, and only then asks for the next target. Recomputing the target on
+    each wake is the bug this shape exists to prevent: the wake that ends the
+    final sleep lands at or just past 09:00, where "the next 09:00" is already
+    tomorrow, so the loop would sleep straight past every scheduled run.
+
+    Remaining time is measured in absolute seconds (``timestamp()``), never by
+    subtracting two datetimes that share a tzinfo, which Python does on the
+    wall clock and gets wrong by an hour across a DST change. The target
+    itself still comes from ``next_run_at``'s wall-clock arithmetic, so the
+    run stays at 09:00 local on both sides of the change.
+
+    A wake that finds the clock past ``due`` by more than the catch-up window
+    (host suspend, clock step) skips that run instead of mailing people hours
+    late, and moves on to the next day.
+
+    ``clock`` and ``sleep`` are injectable so the schedule can be tested on a
+    fake clock; production uses the wall clock and ``asyncio.sleep``.
+    """
+    tz = ZoneInfo(settings.display_tz)
+    now_fn: Clock = clock or (lambda: datetime.now(tz=tz))
+    window = timedelta(minutes=settings.reminder_catchup_minutes)
+
+    now_local = now_fn().astimezone(tz)
+    # A restart inside the catch-up window runs today's pass immediately;
+    # the dedupe row makes that harmless if it already ran. next_run_at from
+    # a time past today's target is tomorrow's, so this cannot double up.
+    if within_catchup_window(settings, now_local):
+        await _safe_tick(tick, "startup catch-up tick")
+    due = next_run_at(settings, now_local)
+
+    while True:
+        now_local = now_fn().astimezone(tz)
+        remaining = due.timestamp() - now_local.timestamp()
+        if remaining > 0:
+            await sleep(min(remaining, _MAX_SLEEP_SECONDS))
+            continue
+        late = timedelta(seconds=-remaining)
+        if late <= window:
+            await _safe_tick(tick, "reminder tick")
+        else:
+            logger.warning(
+                "skipping reminder run; woke too long after its target",
+                extra={
+                    "due": due.isoformat(),
+                    "woke": now_local.isoformat(),
+                    "late_minutes": int(late.total_seconds() // 60),
+                    "catchup_minutes": settings.reminder_catchup_minutes,
+                },
+            )
+        # From here, now >= due, so next_run_at returns a strictly later
+        # target (tomorrow's, or later still after a multi-day suspend).
+        due = next_run_at(settings, now_fn().astimezone(tz))
+
+
 async def _amain(loop: bool) -> int:
     settings = get_settings()
     configure_logging(settings.log_format)
@@ -459,7 +539,6 @@ async def _amain(loop: bool) -> int:
             _log_tick(await run_tick(settings))
             return 0
 
-        tz = ZoneInfo(settings.display_tz)
         logger.info(
             "reminder loop starting",
             extra={
@@ -474,28 +553,8 @@ async def _amain(loop: bool) -> int:
                 "version": __version__,
             },
         )
-        # A restart inside the catch-up window runs today's pass immediately;
-        # the dedupe row makes that harmless if it already ran.
-        if within_catchup_window(settings, datetime.now(tz=tz)):
-            try:
-                _log_tick(await run_tick(settings))
-            except Exception:
-                logger.exception("startup catch-up tick raised; continuing")
-
-        while True:
-            now_local = datetime.now(tz=tz)
-            due = next_run_at(settings, now_local)
-            remaining = (due - now_local).total_seconds()
-            if remaining > 0:
-                await asyncio.sleep(min(remaining, _MAX_SLEEP_SECONDS))
-                continue
-            try:
-                _log_tick(await run_tick(settings))
-            except Exception:
-                # Never let a bad tick end the loop; tomorrow deserves a try.
-                logger.exception("reminder tick raised; continuing loop")
-            # Step past the target so the next next_run_at lands on tomorrow.
-            await asyncio.sleep(60)
+        await run_schedule(settings, tick=lambda: run_tick(settings))
+        return 0
     finally:
         await close_pool()
 
