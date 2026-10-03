@@ -17,10 +17,13 @@ from setlist_stash.web_helpers import _gap_label
     ("gap", "expected"),
     [
         (0, "last show"),
-        (1, "1 show gap"),
-        (2, "2 show gap"),
-        (6, "6 show gap"),
-        (320, "320 show gap"),
+        # phish.net convention: the show being picked counts. Tweezer Reprise
+        # last played 9/6 with only 10/2 since (gap 1) is a 2 show gap on
+        # 10/3, not the "1 show gap" this used to print.
+        (1, "2 show gap"),
+        (2, "3 show gap"),
+        (6, "7 show gap"),
+        (320, "321 show gap"),
         (None, ""),
         (-1, ""),
         ("not-a-number", ""),
