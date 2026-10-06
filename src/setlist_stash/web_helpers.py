@@ -106,6 +106,13 @@ def _gap_label(gap: Any) -> str:
     higher means longer since. Returns ``""`` when gap is unknown (None) so
     the caller can degrade to a plain song title — keeps the shared repo's
     Phish deployment working even if its upstream omits gap.
+
+    The label counts the way phish.net and All Things Umphrey's do: the gap
+    the song would carry if it were played at the show being picked, which
+    counts that show too. A song last heard two nights ago (one completed
+    show since, ``gap == 1``) reads "2 show gap", the number players see on
+    the setlist page if it lands. ``gap == 0`` stays "last show" rather than
+    "1 show gap" because that is the warning the hint exists to give.
     """
     if gap is None:
         return ""
@@ -117,9 +124,7 @@ def _gap_label(gap: Any) -> str:
         return ""
     if n == 0:
         return "last show"
-    if n == 1:
-        return "1 show gap"
-    return f"{n} show gap"
+    return f"{n + 1} show gap"
 
 
 def _humanize_countdown(seconds: int) -> str:

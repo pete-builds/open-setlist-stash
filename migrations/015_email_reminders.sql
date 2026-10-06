@@ -1,7 +1,13 @@
--- setlist-stash schema, version 13.
+-- setlist-stash schema, version 15.
 --
 -- Show-day pick reminders + the unsubscribe state they honor.
--- Idempotent. Safe on a DB that ran 001-012.
+-- Idempotent. Safe on a DB that ran 001-014.
+--
+-- Shipped first as 013_email_reminders.sql, colliding with
+-- 013_auth_token_email.sql. The runner keys on the version number, so every
+-- DB that already held version 13 would have skipped this file silently and
+-- 500'd /account on the missing column. A fresh DB that applied both 013s
+-- re-runs this as 015 harmlessly: every statement is IF NOT EXISTS.
 --
 -- Two additions, and the second is the load-bearing one:
 --
@@ -57,7 +63,7 @@ CREATE TABLE IF NOT EXISTS email_sends (
 CREATE INDEX IF NOT EXISTS email_sends_kind_key_idx
     ON email_sends (kind, dedupe_key);
 
-INSERT INTO schema_version (version) VALUES (13)
+INSERT INTO schema_version (version) VALUES (15)
     ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
