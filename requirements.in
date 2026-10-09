@@ -1,4 +1,4 @@
-fastapi==0.141.1
+fastapi==0.142.2
 # Direct pin on a transitive dep. fastapi only asks for starlette>=0.46.0, and
 # the resolver was settling on 1.0.0, which carries two HIGH CVEs:
 # CVE-2026-48818 (SSRF + NTLM credential theft via UNC paths, fixed 1.1.0) and
@@ -13,7 +13,7 @@ pydantic==2.13.5
 pydantic-settings==2.15.0
 python-multipart==0.0.32
 itsdangerous==2.2.0
-python-dotenv==1.2.3
+python-dotenv==1.2.4
 aiosmtplib==5.1.3
 markdown==3.11
 authlib==1.8.0
