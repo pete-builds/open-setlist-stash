@@ -1245,9 +1245,9 @@ starlette==1.7.0 \
     # via
     #   -r requirements.in
     #   fastapi
-types-markdown==3.10.2.20260712 \
-    --hash=sha256:25aea17282490f35ab6b17a87771abd2f479185aaff8e8f4a0035043f02f2c52 \
-    --hash=sha256:a551ddedde46e0eaca7059aa3d0e42db71afe2b53d8b58f72f2de63f3284f625
+types-markdown==3.10.2.20261007 \
+    --hash=sha256:0259c70643291f4a1841d795dfabcd86380625db6854e5dea639fdaae9e4a623 \
+    --hash=sha256:d1d5faa7b06045d783ad99a27fd909b5d0c5d67c02dc4e4d44052adb2aace169
     # via -r requirements-dev.in
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
