@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Games/Entertainment",
 ]
 dependencies = [
-    "fastapi==0.152.0",
+    "fastapi==0.162.0",
     "uvicorn[standard]==0.54.0",
     "jinja2==3.1.6",
     "httpx==0.28.1",
@@ -39,10 +39,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
-    "pytest-asyncio==1.4.0",
+    "pytest-asyncio==1.4.1",
     "pytest-cov==7.1.0",
     "respx==0.23.1",
-    "ruff==0.17.1",
+    "ruff==0.17.3",
     "mypy==2.4.0",
 ]
 
