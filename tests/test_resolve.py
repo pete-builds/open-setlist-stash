@@ -3,7 +3,7 @@
 Two flavors:
 - DB-backed integration tests gated on ``TEST_PG_DSN`` (skip if absent).
   These cover: resolver scoring path, no-op path, watchdog stale-running
-  flip, cancelled-show path.
+  flip, latest-run summary, cancelled-show path.
 - Pure unit tests (always run): setlist parsing lives in
   ``test_resolve_setlist.py``; this file owns the resolver-level behavior.
 
@@ -21,6 +21,7 @@ import pytest
 
 from setlist_stash.config import Settings
 from setlist_stash.resolve import (
+    latest_run_summary,
     parse_setlist,
     run_tick,
     watchdog_stale_running,
@@ -395,10 +396,49 @@ async def test_watchdog_flips_stale_running_rows(pg_pool: Any) -> None:
     assert flipped == 1
 
     async with pg_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT status, error_message FROM scoring_runs ORDER BY id ASC")
+        rows = await conn.fetch(
+            "SELECT status, error_message, finished_at FROM scoring_runs ORDER BY id ASC"
+        )
     assert rows[0]["status"] == "error"
-    assert "watchdog" in (rows[0]["error_message"] or "")
+    # Exact text, not a substring: operators grep logs and the scoring_runs
+    # table for this marker to tell a crashed run from a real tick error.
+    assert rows[0]["error_message"] == "watchdog: stale running row"
+    assert rows[0]["finished_at"] is not None
     assert rows[1]["status"] == "running"
+    assert rows[1]["finished_at"] is None
+
+
+@pytest.mark.asyncio
+@requires_pg
+async def test_latest_run_summary_reports_newest_run_in_display_tz(pg_pool: Any) -> None:
+    """/healthz's resolver heartbeat is the NEWEST scoring_runs row, in Eastern.
+
+    Two runs where the older one succeeded and the newer one errored: a
+    summary that picked the wrong end of the table would report a healthy
+    resolver that is actually failing.
+    """
+    assert await latest_run_summary(pg_pool) is None
+
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO scoring_runs (started_at, finished_at, status)
+            VALUES ('2026-07-04 22:00:00+00', '2026-07-04 22:00:05+00', 'success')
+            """
+        )
+        await conn.execute(
+            """
+            INSERT INTO scoring_runs (started_at, status)
+            VALUES ('2026-07-04 23:30:00+00', 'error')
+            """
+        )
+
+    latest = await latest_run_summary(pg_pool, display_tz="America/New_York")
+    assert latest == {
+        "started_at": "2026-07-04T19:30:00-04:00",
+        "finished_at": None,
+        "status": "error",
+    }
 
 
 # ----- completeness gate (DB-backed) ---------------------------------------
