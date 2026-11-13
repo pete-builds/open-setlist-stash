@@ -6,6 +6,48 @@
 
 **A self-hostable prediction game that reads any band's setlist data over MCP.**
 
+## Try it in five minutes
+
+All you need is Docker with Compose v2. No accounts, no API keys, no `.env` file.
+
+```bash
+git clone https://github.com/pete-builds/open-setlist-stash.git
+cd open-setlist-stash
+docker compose -f docker-compose.demo.yml up -d --build --wait
+```
+
+The command returns once the game is ready (under a minute on a fast connection; the first run
+builds the image). Then open <http://localhost:8706> and:
+
+1. Type any handle and press **Start playing**. That is the whole sign-in: an anonymous handle
+   kept in a cookie.
+2. Press **Make your picks**. The next show is a few days away, so picks are open.
+3. Type part of a song title (try `comet`), pick up to five songs, tap one as your encore call,
+   and submit.
+4. Open **Leaderboard**, **Shows** and **Stats**: four demo players already have two past shows
+   scored.
+
+Port 8706 taken? Prefix the command with `DEMO_PORT=9000`. To stop the demo and delete its
+database:
+
+```bash
+docker compose -f docker-compose.demo.yml down -v
+```
+
+**What the demo is not.** It is not a production configuration and not a template for one. The
+band ("The Placeholder Comets") is made up, and so is every song, venue and player; they come from
+a small bundled data server ([`demo/data_server.py`](demo/data_server.py)) whose show dates are
+laid out around the day you start it. The database password is a throwaway value, and the
+session key is the app's shipped development default, which is public; the app refuses to boot
+with that key on an https `BASE_URL` or with `COOKIE_SECURE=true`. Nothing is reachable from
+outside your machine, and there is no resolver running, so your own picks are never scored. To
+run a real game, use [Run it](#run-it) below with your own `.env` and your own MCP data server.
+
+On an SELinux host (Fedora, RHEL), the two read-only bind mounts in the demo file may need `:z`
+added (`./demo:/demo:ro,z`) before the containers can read them.
+
+## How it works
+
 The game engine holds no setlist data of its own. Every read goes out over the
 [Model Context Protocol](https://modelcontextprotocol.io) to a server you point it at, so the
 same container runs for Phish, Umphrey's McGee, or any act you can stand up a data source for.

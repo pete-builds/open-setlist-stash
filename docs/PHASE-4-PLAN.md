@@ -1,3 +1,6 @@
+> **Historical document, kept for its design notes; its game rules, lock time and network rules are out of date.**
+> Current rules: the README's [The game](../README.md#the-game) section, with `src/setlist_stash/scoring.py` (points) and `src/setlist_stash/locks.py` (pick cutoff) as the code of record.
+
 # Phase 4 Plan — `setlist-stash`
 
 Setlist prediction game for Phish shows. Phase 4 of the Phish Data Platform.

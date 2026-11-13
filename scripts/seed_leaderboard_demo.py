@@ -1,239 +1,299 @@
-"""DEV TOOL — seed demo leaderboard data and rebuild snapshots.
+"""DEMO TOOL: seed demo players and a scored past show into the DEMO database.
 
-NOT a deploy artifact. Use to verify the leaderboard renders without waiting
-for a real show resolver tick.
+NOT a deploy artifact. It is the ``demo-seed`` step of
+``docker-compose.demo.yml`` and runs once, before the game starts, so a visitor
+lands on a leaderboard that already has people on it.
 
-What this does:
-  1. Inserts 3 fake users (or upserts if they exist).
-  2. Creates a `prediction_locks` row for a clearly-past show date.
-  3. Inserts 3 predictions for that date with hand-picked scores.
-  4. Calls every leaderboard rebuilder.
-  5. Prints the resulting snapshot rows.
+Safety: it REFUSES to touch any database whose name is not
+``setlist_stash_demo`` (exit code 2, nothing written, not even migrations). The
+name is read from the server with ``SELECT current_database()``, not from an
+environment variable, so a mistyped ``PG_DB`` or a stray ``.env`` cannot point
+it at a real deployment. Both production tenants use other database names.
 
-Demo data is marked: handles start with ``demo_`` and the show_date is
-``1990-12-31`` so it's obvious. Cleanup is a single SQL line:
+What it does, through the same code paths a real show night uses:
+  1. Applies migrations (idempotent).
+  2. Asks the data server (``MCP_PHISH_URL``) which shows have already been
+     played, and takes the two most recent.
+  3. Creates four demo players (handles start with ``demo_``) and gives each
+     one a set of picks for those shows. Picks are inserted while the show is
+     still open, then the show's cutoff is moved back to its real, past value,
+     because the database refuses picks for a locked show.
+  4. Runs one resolver tick (``setlist_stash.resolve.run_tick``), which reads
+     each setlist from the data server, scores every pick with the real
+     scoring rules, finalizes the shows and rebuilds the leaderboards.
+  5. Prints the all-time leaderboard, and exits non-zero if nothing was scored,
+     so the demo never starts on an empty board without saying so.
 
-    DELETE FROM prediction_locks WHERE show_date = '1990-12-31';
+Idempotent: a show that already has a lock row is left alone, so restarting
+the demo does not duplicate anything.
 
-(predictions cascade via show_date FK; users can be deleted explicitly).
-
-Usage (local with TEST_PG_DSN):
-    export PG_HOST=127.0.0.1 PG_PORT=5434 PG_DB=setlist_stash \
-           PG_USER=setlist_stash PG_PASSWORD=...
-    python -m scripts.seed_leaderboard_demo
-
-Usage on nix1 (inside the container):
-    docker compose exec setlist-stash python -m scripts.seed_leaderboard_demo
+Usage (the demo compose file runs this for you):
+    docker compose -f docker-compose.demo.yml up --build
+By hand, against a local Postgres that has a ``setlist_stash_demo`` database
+and a running demo data server:
+    PG_HOST=127.0.0.1 PG_DB=setlist_stash_demo PG_USER=... PG_PASSWORD=... \
+    MCP_PHISH_URL=http://127.0.0.1:3790/mcp python scripts/seed_leaderboard_demo.py
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sys
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
-# Make the script runnable without `pip install -e .` by adding src/ to path.
+# Make the script runnable from a checkout without `pip install -e .`.
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent / "src"))
 
 import asyncpg  # noqa: E402
 
-from setlist_stash.config import get_settings  # noqa: E402
+from setlist_stash import db as db_module  # noqa: E402
+from setlist_stash.config import Settings, get_settings  # noqa: E402
 from setlist_stash.leaderboard import (  # noqa: E402
+    derive_tour_season_key,
     fetch_leaderboard,
-    list_scope_keys,
-    rebuild_all,
+    latest_scope_key,
 )
+from setlist_stash.locks import compute_default_lock_at, resolve_venue_tz  # noqa: E402
+from setlist_stash.mcp_client import McpPhishClient  # noqa: E402
+from setlist_stash.migrate import run_migrations  # noqa: E402
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("seed_leaderboard_demo")
 
-DEMO_SHOW_DATE = date(1990, 12, 31)
-DEMO_HANDLES = ("demo_alice", "demo_bob", "demo_carol")
-# (handle, picks, opener, closer, encore, score, breakdown_json)
-_DemoPred = tuple[str, list[str], str | None, str | None, str | None, int, dict[str, Any]]
-DEMO_PREDICTIONS: tuple[_DemoPred, ...] = (
-    (
-        "demo_alice",
-        ["divided-sky", "fluffhead", "tweezer"],
-        "tweezer",
-        "harry-hood",
-        "loving-cup",
-        140,
-        {"picks": [{"slug": "tweezer", "played": True, "base": 47}], "total": 140, "demo": True},
+#: The only database this script will write to.
+DEMO_DB_NAME = "setlist_stash_demo"
+#: Exit code when the target is not the demo database.
+EXIT_NOT_DEMO = 2
+
+DEMO_HANDLES = ("demo_alice", "demo_bob", "demo_carol", "demo_dana")
+
+# Picks per player, for the most recent past show (index 0) and the one before
+# it (index 1): (song slugs, encore call). The slugs are songs of the demo
+# data server's made-up band. Whether each one scores is decided by the real
+# scoring rules against the setlist the data server returns, not here.
+DEMO_PICKS: dict[str, tuple[tuple[list[str], str] | None, ...]] = {
+    "demo_alice": (
+        (
+            ["cardboard-comet", "echo-pocket", "placeholder-blues", "kite-engine", "moth-radio"],
+            "placeholder-blues",
+        ),
+        (["moth-radio", "kite-engine", "the-lighthouse-is-a-rumor"], "the-lighthouse-is-a-rumor"),
     ),
-    (
-        "demo_bob",
-        ["bouncing-around-the-room", "harry-hood", "weekapaug-groove"],
-        "bouncing-around-the-room",
-        "weekapaug-groove",
-        "show-of-life",
-        92,
-        {"picks": [{"slug": "harry-hood", "played": True, "base": 22}], "total": 92, "demo": True},
+    "demo_bob": (
+        (["the-long-hallway", "velvet-weather", "hello-world-jam"], "velvet-weather"),
+        (["static-garden", "velvet-weather", "cardboard-comet", "echo-pocket"], "cardboard-comet"),
     ),
-    (
-        "demo_carol",
-        ["antelope", "reba", "you-enjoy-myself"],
-        "antelope",
-        "you-enjoy-myself",
-        "good-times-bad-times",
-        58,
-        {"picks": [{"slug": "reba", "played": True, "base": 18}], "total": 58, "demo": True},
+    "demo_carol": (
+        (["static-garden", "lemon-telegram", "tin-can-telescope", "borrowed-thunder"],
+         "static-garden"),
+        (
+            [
+                "borrowed-thunder",
+                "midnight-inventory",
+                "lorem-ipsum-shuffle",
+                "the-lighthouse-is-a-rumor",
+                "paper-satellites",
+            ],
+            "paper-satellites",
+        ),
     ),
-)
+    "demo_dana": (
+        (
+            ["slow-parade", "gravel-and-honey", "sample-text-stomp", "example-dot-com",
+             "hello-world-jam"],
+            "hello-world-jam",
+        ),
+        None,  # sat this one out, so the boards show different show counts
+    ),
+}
+
+McpFactory = Callable[[Settings], McpPhishClient]
 
 
-async def _make_pool() -> asyncpg.Pool[Any]:
-    settings = get_settings()
-    pool = await asyncpg.create_pool(dsn=settings.pg_dsn, min_size=1, max_size=2)
-    if pool is None:
-        raise RuntimeError("could not open Postgres pool")
-    return pool
+class NotDemoDatabase(RuntimeError):
+    """The connected database is not the demo database."""
 
 
-async def _seed(pool: asyncpg.Pool[Any]) -> None:
-    """Insert/update the demo rows. Idempotent.
+def check_demo_database(name: str) -> None:
+    """Raise :class:`NotDemoDatabase` unless ``name`` is exactly the demo DB."""
+    if name != DEMO_DB_NAME:
+        raise NotDemoDatabase(
+            f"refusing to seed database {name!r}: this script only writes to "
+            f"{DEMO_DB_NAME!r}, the database created by docker-compose.demo.yml"
+        )
 
-    Strategy:
-    - users: upsert by handle_lower
-    - prediction_locks: upsert by show_date with lock_at far in the past so the
-      lock-guard trigger does NOT block (UPDATE on existing pred is fine when
-      lock_at < now since picks didn't change)
-    - predictions: best-effort; if predictions already exist for this date,
-      update score + breakdown only (avoid the lock-guard trigger entirely).
-    """
-    past_lock = datetime.now(UTC) - timedelta(days=365 * 30)
+
+async def assert_demo_database(conn: Any) -> str:
+    """Ask the server which database this connection is on, and check it."""
+    name = str(await conn.fetchval("SELECT current_database()"))
+    check_demo_database(name)
+    return name
+
+
+def _default_mcp(settings: Settings) -> McpPhishClient:
+    return McpPhishClient(
+        settings.mcp_phish_url, timeout_seconds=settings.mcp_phish_timeout_seconds
+    )
+
+
+async def _recent_past_shows(
+    mcp: McpPhishClient, today: date, count: int
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for year in (today.year - 1, today.year):
+        rows.extend(await mcp.search_shows(year=year, limit=200))
+    past: list[tuple[date, dict[str, Any]]] = []
+    for row in rows:
+        try:
+            d = date.fromisoformat(str(row["date"]))
+        except (KeyError, ValueError):
+            continue
+        if d < today:
+            past.append((d, row))
+    past.sort(key=lambda pair: pair[0], reverse=True)
+    return [row for _, row in past[:count]]
+
+
+async def _seed_show(
+    pool: asyncpg.Pool[Any],
+    settings: Settings,
+    show: dict[str, Any],
+    picks_index: int,
+    user_ids: dict[str, int],
+) -> bool:
+    """Open, fill and re-lock one past show. False if it was already seeded."""
+    show_date = date.fromisoformat(str(show["date"]))
+    venue_tz = resolve_venue_tz(show.get("location"), settings.default_lock_tz)
+    real_lock = compute_default_lock_at(show_date, settings, venue_tz=venue_tz)
     async with pool.acquire() as conn, conn.transaction():
-        # Users.
-        user_ids: dict[str, int] = {}
-        for handle in DEMO_HANDLES:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO users (handle, handle_lower)
-                VALUES ($1, $2)
-                ON CONFLICT (handle_lower) DO UPDATE
-                    SET last_seen_at = now()
-                RETURNING id
-                """,
-                handle,
-                handle.lower(),
-            )
-            if row is None:
-                raise RuntimeError(f"could not upsert user {handle}")
-            user_ids[handle] = int(row["id"])
-
-        # Prediction lock for the demo show.
+        exists = await conn.fetchval(
+            "SELECT 1 FROM prediction_locks WHERE show_date = $1", show_date
+        )
+        if exists:
+            return False
+        # Open the show briefly: the lock-guard trigger rejects any pick
+        # written after the cutoff, which for a past show has already passed.
         await conn.execute(
             """
-            INSERT INTO prediction_locks (show_date, lock_at, venue_tz, summary, resolved_at)
-            VALUES ($1, $2, 'UTC', $3::jsonb, now())
-            ON CONFLICT (show_date) DO UPDATE
-                SET lock_at = EXCLUDED.lock_at,
-                    summary = EXCLUDED.summary,
-                    resolved_at = COALESCE(prediction_locks.resolved_at, EXCLUDED.resolved_at)
+            INSERT INTO prediction_locks
+                (show_date, show_id, lock_at, venue_tz, tour_season_key)
+            VALUES ($1, $2, $3, $4, $5)
             """,
-            DEMO_SHOW_DATE,
-            past_lock,
-            json.dumps({"demo": True}),
+            show_date,
+            str(show.get("show_id") or "") or None,
+            datetime.now(UTC) + timedelta(hours=1),
+            venue_tz,
+            derive_tour_season_key(show.get("tour_name"), show_date),
         )
-
-        # Predictions. Insert with score baked in so the lock-guard trigger
-        # path is exercised the same way the resolver does it (UPDATE of
-        # score column post-lock is allowed by migration 002's tightened
-        # trigger). We insert WITHOUT a score first while lock_at could be
-        # in the past — but since lock_at IS in the past, any INSERT raises.
-        # Workaround: temporarily lift the lock, insert, then drop it back.
-        # Cleaner approach: bypass via a NULL lock_at row briefly (not great).
-        # Best: detect existing pred and UPDATE only.
-        for handle, picks, opener, closer, encore, score, breakdown in DEMO_PREDICTIONS:
-            uid = user_ids[handle]
-            existing = await conn.fetchrow(
-                "SELECT id FROM predictions WHERE user_id = $1 AND show_date = $2",
-                uid,
-                DEMO_SHOW_DATE,
-            )
-            if existing is None:
-                # Briefly move lock_at to the future to allow the insert,
-                # then move it back. This is a dev tool; keep it transactional.
-                future_lock = datetime.now(UTC) + timedelta(hours=1)
-                await conn.execute(
-                    "UPDATE prediction_locks SET lock_at = $2 WHERE show_date = $1",
-                    DEMO_SHOW_DATE,
-                    future_lock,
-                )
-                await conn.execute(
-                    """
-                    INSERT INTO predictions (
-                        user_id, show_date, pick_song_slugs,
-                        opener_slug, closer_slug, encore_slug
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6)
-                    """,
-                    uid,
-                    DEMO_SHOW_DATE,
-                    sorted(picks),
-                    opener,
-                    closer,
-                    encore,
-                )
-                await conn.execute(
-                    "UPDATE prediction_locks SET lock_at = $2 WHERE show_date = $1",
-                    DEMO_SHOW_DATE,
-                    past_lock,
-                )
-            # Now stamp the score (allowed by the post-migration-002 trigger).
+        for handle, per_show in DEMO_PICKS.items():
+            entry = per_show[picks_index]
+            if entry is None:
+                continue
+            slugs, encore = entry
             await conn.execute(
                 """
-                UPDATE predictions
-                   SET score = $2,
-                       score_breakdown = $3::jsonb
-                 WHERE user_id = $1 AND show_date = $4
+                INSERT INTO predictions (user_id, show_date, pick_song_slugs, encore_slug)
+                VALUES ($1, $2, $3, $4)
                 """,
-                uid,
-                score,
-                json.dumps({**breakdown, "demo": True}),
-                DEMO_SHOW_DATE,
+                user_ids[handle],
+                show_date,
+                sorted(slugs),
+                encore,
+            )
+        # Close it again at its real cutoff.
+        await conn.execute(
+            "UPDATE prediction_locks SET lock_at = $2 WHERE show_date = $1",
+            show_date,
+            real_lock,
+        )
+    return True
+
+
+async def seed_demo(
+    settings: Settings, *, mcp_factory: McpFactory = _default_mcp
+) -> int:
+    """Seed the demo database. Returns a process exit code."""
+    # Guard first, on a bare connection, before migrations or anything else.
+    conn = await asyncpg.connect(dsn=settings.pg_dsn)
+    try:
+        name = await assert_demo_database(conn)
+    except NotDemoDatabase as exc:
+        print(f"seed_leaderboard_demo: {exc}", file=sys.stderr)
+        return EXIT_NOT_DEMO
+    finally:
+        await conn.close()
+    logger.info("target is the demo database", extra={"db": name})
+
+    from setlist_stash.resolve import run_tick  # after the guard: imports the app
+
+    pool = await db_module.init_pool(settings)
+    try:
+        # init_pool reuses a pool that already exists in this process, and the
+        # resolver tick below writes through that global pool, so check the
+        # database it is actually on as well, not only the probe connection.
+        try:
+            await assert_demo_database(pool)
+        except NotDemoDatabase as exc:
+            print(f"seed_leaderboard_demo: {exc}", file=sys.stderr)
+            return EXIT_NOT_DEMO
+        await run_migrations(pool)
+        today = datetime.now(tz=ZoneInfo(settings.display_tz)).date()
+        async with mcp_factory(settings) as mcp:
+            shows = await _recent_past_shows(mcp, today, count=2)
+        if not shows:
+            print("seed_leaderboard_demo: the data server has no past shows", file=sys.stderr)
+            return 1
+
+        user_ids: dict[str, int] = {}
+        async with pool.acquire() as conn2:
+            for handle in DEMO_HANDLES:
+                user_ids[handle] = int(
+                    await conn2.fetchval(
+                        """
+                        INSERT INTO users (handle, handle_lower) VALUES ($1, $2)
+                        ON CONFLICT (handle_lower) DO UPDATE SET last_seen_at = now()
+                        RETURNING id
+                        """,
+                        handle,
+                        handle.lower(),
+                    )
+                )
+        for i, show in enumerate(shows):
+            seeded = await _seed_show(pool, settings, show, i, user_ids)
+            logger.info(
+                "demo show %s: %s", show["date"], "seeded" if seeded else "already seeded"
             )
 
-    logger.info("demo data seeded", extra={"show_date": DEMO_SHOW_DATE.isoformat()})
-
-
-async def _print_snapshots(pool: asyncpg.Pool[Any]) -> None:
-    print("\n=== leaderboard_snapshots ===")
-    for scope in ("weekly", "tour", "all_time"):
-        keys = await list_scope_keys(pool, scope)
-        print(f"\nscope={scope}, scope_keys={keys}")
-        for key in keys:
-            rows = await fetch_leaderboard(pool, scope, key, limit=20)
-            print(f"  {key}:")
-            for r in rows:
-                print(
-                    f"    #{r.rank}  {r.handle:<20}  "
-                    f"score={r.total_score:>5}  shows={r.shows_played:>3}"
-                )
-
-
-async def _amain() -> int:
-    pool = await _make_pool()
-    try:
-        await _seed(pool)
-        counts = await rebuild_all(pool)
-        logger.info("rebuilders done", extra={"counts": counts})
-        await _print_snapshots(pool)
-        print(
-            "\nCleanup (when done):\n"
-            "  DELETE FROM prediction_locks WHERE show_date = '1990-12-31';\n"
-            "  DELETE FROM users WHERE handle_lower LIKE 'demo_%';\n"
-            "  -- then re-run rebuilders or wait for next resolver tick."
+        result = await run_tick(settings)
+        logger.info(
+            "resolver tick: status=%s shows_resolved=%s predictions_scored=%s",
+            result.status,
+            result.shows_resolved,
+            result.predictions_scored,
         )
+
+        key = await latest_scope_key(pool, "all_time")
+        rows = await fetch_leaderboard(pool, "all_time", key, limit=20) if key else []
+        print("\nAll-time leaderboard (demo):")
+        for r in rows:
+            print(f"  #{r.rank}  {r.handle:<12} score={r.total_score:>3}  shows={r.shows_played}")
+        if not rows:
+            print("seed_leaderboard_demo: nothing was scored", file=sys.stderr)
+            return 1
+        return 0
     finally:
-        await pool.close()
-    return 0
+        await db_module.close_pool()
+
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    return asyncio.run(seed_demo(get_settings()))
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(_amain()))
+    sys.exit(main())

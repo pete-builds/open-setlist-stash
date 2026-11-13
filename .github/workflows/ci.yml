@@ -153,6 +153,28 @@ jobs:
           path: coverage.xml
           retention-days: 7
 
+  # The README's "Try it in five minutes" demo, run the way a stranger runs
+  # it: docker-compose.demo.yml from a clean runner, then a visitor's path over
+  # plain HTTP (home page, anonymous handle, the upcoming show's pick sheet,
+  # song search, one pick submitted, seeded leaderboard). The same script runs
+  # locally: `bash demo/smoke_test.sh`. Without this job the demo can rot
+  # silently, because nothing else here starts the app against a data server.
+  demo-smoke:
+    name: Demo smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Start the demo and drive it over HTTP
+        run: bash demo/smoke_test.sh
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.demo.yml down -v
+
   build-image:
     name: Build Docker image
     runs-on: ubuntu-latest

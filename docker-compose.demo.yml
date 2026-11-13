@@ -1,0 +1,124 @@
+# One-command local demo. NOT a production configuration.
+#
+#   docker compose -f docker-compose.demo.yml up --build
+#   open http://localhost:8706
+#   docker compose -f docker-compose.demo.yml down -v     # remove everything
+#
+# Everything it needs is in this file: no .env, no accounts, no API keys, and no
+# external Docker network. The setlist data comes from a small bundled server
+# (demo/data_server.py) that serves a made-up band, so nothing here talks to a
+# real band's data source. The game is published on 127.0.0.1 only.
+#
+# It is deliberately separate from docker-compose.yml, which is the production
+# layout. The project name below keeps its containers, network and volume apart
+# from a production stack on the same machine, and no container_name is set
+# for the same reason. The database password below is a throwaway demo value,
+# and the database is never published to the host. No SESSION_SECRET is set, so
+# the app runs on its shipped development key, which is public. The app itself
+# refuses to boot with that key when BASE_URL is https or COOKIE_SECURE=true, so
+# this file cannot be turned into a public deployment by changing BASE_URL alone
+# (demo/smoke_test.sh checks that refusal on every run).
+
+name: setlist-stash-demo
+
+x-demo-image: &demo-image
+  build: .
+  image: setlist-stash-demo:local
+
+x-demo-env: &demo-env
+  PG_HOST: postgres
+  PG_PORT: "5432"
+  PG_DB: setlist_stash_demo
+  PG_USER: setlist_stash_demo
+  PG_PASSWORD: demo-only-not-a-secret
+  MCP_PHISH_URL: http://demo-data:3790/mcp
+  LOG_FORMAT: text
+  TZ: UTC
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: setlist_stash_demo
+      POSTGRES_USER: setlist_stash_demo
+      POSTGRES_PASSWORD: demo-only-not-a-secret
+    volumes:
+      - demo-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U setlist_stash_demo -d setlist_stash_demo"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # Bundled data server for a fictional band. Same image as the game; the
+  # script is mounted read-only rather than baked into the production image.
+  demo-data:
+    <<: *demo-image
+    entrypoint: ["python", "/demo/data_server.py"]
+    read_only: true
+    volumes:
+      - ./demo:/demo:ro
+    environment:
+      DEMO_DATA_PORT: "3790"
+      DISPLAY_TZ: America/New_York
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3790/healthz', timeout=3)"
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    security_opt:
+      - no-new-privileges:true
+
+  # One-shot: demo players, two scored past shows, leaderboards. Refuses to
+  # run against any database not named setlist_stash_demo.
+  demo-seed:
+    <<: *demo-image
+    entrypoint: ["python", "/seed/seed_leaderboard_demo.py"]
+    read_only: true
+    restart: "no"
+    volumes:
+      - ./scripts/seed_leaderboard_demo.py:/seed/seed_leaderboard_demo.py:ro
+    environment:
+      <<: *demo-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      demo-data:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    security_opt:
+      - no-new-privileges:true
+
+  setlist-stash:
+    <<: *demo-image
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M
+    ports:
+      - "127.0.0.1:${DEMO_PORT:-8706}:3706"
+    environment:
+      <<: *demo-env
+      APP_HOST: 0.0.0.0
+      APP_PORT: "3706"
+      BASE_URL: http://localhost:${DEMO_PORT:-8706}
+      EMAIL_PROVIDER: disabled
+      SITE_NAME: Setlist Stash Demo
+      MCP_SUBJECT: The Placeholder Comets
+      BETA_NOTICE: >-
+        Local demo. The Placeholder Comets are a made-up band, and every
+        song, venue and player here is invented.
+    depends_on:
+      demo-seed:
+        condition: service_completed_successfully
+      demo-data:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  demo-pg-data:
