@@ -141,4 +141,22 @@ code=$(fetch board "${BASE}/leaderboard?scope=all_time")
 expect_in board "demo_dana"
 pass "leaderboard shows the seeded demo players"
 
+# 10. The demo runs on the app's public development session key. The app must
+# refuse to boot with it once BASE_URL is https, or this file could be turned
+# into a public deployment with forgeable sessions by changing one variable.
+cid=$("${COMPOSE[@]}" run -d --no-deps -e BASE_URL=https://example.test setlist-stash)
+for _ in $(seq 1 30); do
+  [ "$(docker inspect -f '{{.State.Running}}' "${cid}")" = "false" ] && break
+  sleep 1
+done
+running=$(docker inspect -f '{{.State.Running}} {{.State.ExitCode}}' "${cid}")
+docker logs "${cid}" > "${WORK}/https_refusal.log" 2>&1 || true
+docker rm -f "${cid}" > /dev/null 2>&1 || true
+[ "${running%% *}" = "false" ] \
+  || fail "the app booted with the public session key on an https BASE_URL"
+[ "${running##* }" != "0" ] || fail "https boot with the public key exited 0"
+grep -q "SESSION_SECRET is still the shipped development default" \
+  "${WORK}/https_refusal.log" || fail "https boot did not fail on SESSION_SECRET"
+pass "app refuses the public session key on an https BASE_URL"
+
 echo "SMOKE PASS in $(( $(date +%s) - start ))s (healthy after ${ready}s)"

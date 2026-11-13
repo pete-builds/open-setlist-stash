@@ -37,10 +37,14 @@ docker compose -f docker-compose.demo.yml down -v
 **What the demo is not.** It is not a production configuration and not a template for one. The
 band ("The Placeholder Comets") is made up, and so is every song, venue and player; they come from
 a small bundled data server ([`demo/data_server.py`](demo/data_server.py)) whose show dates are
-laid out around the day you start it. The database password and session key are throwaway
-values, nothing is reachable from outside your machine, and there is no resolver running, so
-your own picks are never scored. To run a real game, use [Run it](#run-it) below with your own
-`.env` and your own MCP data server.
+laid out around the day you start it. The database password is a throwaway value, and the
+session key is the app's shipped development default, which is public; the app refuses to boot
+with that key on an https `BASE_URL` or with `COOKIE_SECURE=true`. Nothing is reachable from
+outside your machine, and there is no resolver running, so your own picks are never scored. To
+run a real game, use [Run it](#run-it) below with your own `.env` and your own MCP data server.
+
+On an SELinux host (Fedora, RHEL), the two read-only bind mounts in the demo file may need `:z`
+added (`./demo:/demo:ro,z`) before the containers can read them.
 
 ## How it works
 

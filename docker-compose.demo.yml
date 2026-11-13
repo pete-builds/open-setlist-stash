@@ -12,9 +12,12 @@
 # It is deliberately separate from docker-compose.yml, which is the production
 # layout. The project name below keeps its containers, network and volume apart
 # from a production stack on the same machine, and no container_name is set
-# for the same reason. The password and session key below are throwaway
-# demo values: the database is never published to the host, and the app only
-# accepts the session key because BASE_URL is plain http on localhost.
+# for the same reason. The database password below is a throwaway demo value,
+# and the database is never published to the host. No SESSION_SECRET is set, so
+# the app runs on its shipped development key, which is public. The app itself
+# refuses to boot with that key when BASE_URL is https or COOKIE_SECURE=true, so
+# this file cannot be turned into a public deployment by changing BASE_URL alone
+# (demo/smoke_test.sh checks that refusal on every run).
 
 name: setlist-stash-demo
 
@@ -103,8 +106,6 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: "3706"
       BASE_URL: http://localhost:${DEMO_PORT:-8706}
-      COOKIE_SECURE: "false"
-      SESSION_SECRET: demo-only-not-a-secret-local-use
       EMAIL_PROVIDER: disabled
       SITE_NAME: Setlist Stash Demo
       MCP_SUBJECT: The Placeholder Comets
