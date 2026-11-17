@@ -3,7 +3,9 @@ name: Publish Docker image
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    # staging publishes :staging (and sha-<commit>) for the staging tenant to
+    # pull. It never moves :latest, which follows the default branch only.
+    branches: [main, staging]
     # Release tags publish versioned, immutable images (:0.3.0 and :0.3) so a
     # self-hoster can pin a release instead of tracking main. `latest` only ever
     # follows the default branch, never a tag.
@@ -46,6 +48,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=staging,enable=${{ github.ref == 'refs/heads/staging' }}
             type=sha,format=long
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
