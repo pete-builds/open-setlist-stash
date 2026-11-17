@@ -5,13 +5,22 @@
 1. **Changes go to `staging` by PR**, Dependabot's included. CI runs on the PR
    and on the push, and `staging` carries the same required checks as `main`.
 2. **Every push to `staging` publishes `ghcr.io/pete-builds/open-setlist-stash:staging`**
-   (plus an immutable `sha-<commit>` tag). A staging tenant runs that image
+   (plus a `sha-<commit>` tag naming the exact commit). A staging tenant runs that image
    against its own database, so a change is played with before any real
    community sees it. `:latest` still follows `main` only.
 3. **Promotion is a PR from `staging` into `main`, merged with a merge commit**
    (not squash), so the tree on `main` is exactly the tree the staging tenant
-   ran. Afterwards `staging` is fast-forwarded to `main` to stay level.
+   ran. Afterwards `staging` is fast-forwarded to `main` to stay level. Two
+   preconditions: wait for main's CI to finish on the merge commit (staging's
+   required checks refuse a commit that has none), and nothing new may have
+   landed on `staging` since the promotion PR was opened. If something did,
+   merge `main` into `staging` by PR instead, as in step 4.
 4. Commits that reach `main` directly (the weekly lockfile loop opens its PRs
    there) are merged back into `staging` by a PR before the next promotion.
+
+**Known gap:** a merge made by a workflow's `GITHUB_TOKEN` (Dependabot
+auto-merge) does not trigger push workflows, so after one, run `ci.yml` and
+`publish-image.yml` on `staging` by hand (`gh workflow run <file> --ref staging`).
+Until then the staging head has no CI run and is not promotable.
 
 Self-hosters are unaffected: pin a release tag (`:0.3.0`) or follow `:latest`.
