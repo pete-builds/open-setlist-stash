@@ -15,7 +15,7 @@ name: lockfile-drift
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, staging]
 
 permissions:
   contents: read
