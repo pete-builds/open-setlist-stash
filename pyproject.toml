@@ -21,13 +21,13 @@ classifiers = [
     "Topic :: Games/Entertainment",
 ]
 dependencies = [
-    "fastapi==0.162.2",
+    "fastapi==0.162.7",
     "uvicorn[standard]==0.54.0",
     "jinja2==3.1.6",
     "httpx==0.28.1",
     "asyncpg==0.32.0",
     "pydantic==2.14.3",
-    "pydantic-settings==2.16.2",
+    "pydantic-settings==2.16.3",
     "python-multipart==0.0.33",
     "itsdangerous==2.2.0",
     "python-dotenv==1.2.4",
@@ -39,10 +39,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest==9.2.0",
-    "pytest-asyncio==1.4.1.post1",
+    "pytest-asyncio==1.5.0",
     "pytest-cov==7.1.0",
     "respx==0.23.1",
-    "ruff==0.17.4",
+    "ruff==0.17.5",
     "mypy==2.4.1",
 ]
 
